@@ -50,6 +50,11 @@ public final class OrderPricer {
                 discountRate.multiply(BigDecimal.valueOf(100)).setScale(1, RoundingMode.HALF_UP));
     }
 
+    /**
+     * Looks up the tier discount rate. Rates are applied to the subtotal before rounding;
+     * only the final subtotal/discount/total are rounded (via {@link #scale}), so a tier
+     * added here (e.g. a future PLATINUM rate) does not need its own rounding logic.
+     */
     static BigDecimal tierDiscount(String tier) {
         if (tier == null) {
             return BigDecimal.ZERO;
