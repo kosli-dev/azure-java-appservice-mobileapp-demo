@@ -7,11 +7,11 @@
 # Re-running it creates a new version of anything whose content changed, so it is safe to
 # run again after editing a schema, a rule or the policy.
 #
-# Requires: kosli CLI, KOSLI_API_TOKEN, KOSLI_ORG.
+# Requires: kosli CLI, KOSLI_PUBLIC_API_TOKEN, KOSLI_ORG.
 set -euo pipefail
 
 : "${KOSLI_ORG:?set KOSLI_ORG}"
-: "${KOSLI_API_TOKEN:?set KOSLI_API_TOKEN}"
+: "${KOSLI_PUBLIC_API_TOKEN:?set KOSLI_PUBLIC_API_TOKEN}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"

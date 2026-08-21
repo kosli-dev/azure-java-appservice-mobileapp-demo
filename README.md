@@ -67,10 +67,10 @@ Repository secret:
 
 | Secret | Value |
 | --- | --- |
-| `KOSLI_API_TOKEN` | An API token for the `kosli-public` org |
+| `KOSLI_PUBLIC_API_TOKEN` | An API token for the `kosli-public` org |
 
 Then run the **Bootstrap Kosli** workflow from the Actions tab (or `./scripts/bootstrap_kosli.sh`
-locally with `KOSLI_ORG` and `KOSLI_API_TOKEN` set). It creates the three custom attestation
+locally with `KOSLI_ORG` and `KOSLI_PUBLIC_API_TOKEN` set). It creates the three custom attestation
 types and the `publish-gate` policy.
 
 > The attestation types are org-level objects. If `kosli-public` already has a type with one

@@ -16,7 +16,7 @@
 #     [--type custom:mutation-testing] \
 #     [--compliant true]
 #
-# Requires: KOSLI_API_TOKEN, KOSLI_ORG, KOSLI_FLOW (or --flow), curl.
+# Requires: KOSLI_PUBLIC_API_TOKEN, KOSLI_ORG, KOSLI_FLOW (or --flow), curl.
 #
 # NOTE: the attestation name here is the name from the flow template (e.g. mutation-tests),
 # not the dotted CLI form (orders-api.mutation-tests) - the artifact is identified separately.
@@ -47,7 +47,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-: "${KOSLI_API_TOKEN:?set KOSLI_API_TOKEN}"
+: "${KOSLI_PUBLIC_API_TOKEN:?set KOSLI_PUBLIC_API_TOKEN}"
 : "${KOSLI_ORG:?set KOSLI_ORG}"
 : "${FLOW:?set KOSLI_FLOW or pass --flow}"
 : "${TRAIL:?pass --trail}"
@@ -79,7 +79,7 @@ echo "$payload" | jq .
 
 http_code="$(curl -sS -o /tmp/kosli-waiver-response.txt -w '%{http_code}' \
   -X POST "$url" \
-  -H "Authorization: Bearer ${KOSLI_API_TOKEN}" \
+  -H "Authorization: Bearer ${KOSLI_PUBLIC_API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d "$payload")"
 

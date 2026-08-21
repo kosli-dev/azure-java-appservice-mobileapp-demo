@@ -39,7 +39,7 @@ permissions:
 env:
   KOSLI_ORG: kosli-public
   KOSLI_FLOW: orders-api-ci
-  KOSLI_API_TOKEN: ${{ secrets.KOSLI_API_TOKEN }}
+  KOSLI_PUBLIC_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}
 
 jobs:
   waive:

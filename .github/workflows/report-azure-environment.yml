@@ -20,7 +20,7 @@ permissions:
 
 env:
   KOSLI_ORG: kosli-public
-  KOSLI_API_TOKEN: ${{ secrets.KOSLI_API_TOKEN }}
+  KOSLI_PUBLIC_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}
 
 jobs:
   snapshot:
