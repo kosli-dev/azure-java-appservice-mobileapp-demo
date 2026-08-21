@@ -88,6 +88,12 @@ switching to it later means changing the flow template and policy from
 
 ## Gotchas
 
+- **The Kosli CLI only reads the token from an env var literally named `KOSLI_API_TOKEN`**
+  (it derives the name from the `--api-token` flag). The GitHub secret is named
+  `KOSLI_PUBLIC_API_TOKEN` for clarity about which org it's for, so every workflow that shells
+  out to `kosli` maps it in the job `env:` as `KOSLI_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}`.
+  Renaming that env var key (not just the secret) breaks the CLI with
+  `--api-token is not set`, which is what happened the first time this was tried.
 - **The first real run needs an approved PR.** Peer review reads the PR behind the merge
   commit, so a direct push to `main` blocks on two controls instead of the one the demo story
   is about.
@@ -101,7 +107,9 @@ switching to it later means changing the flow template and policy from
 
 ## Setup
 
-Secret `KOSLI_PUBLIC_API_TOKEN`; then run the **Bootstrap Kosli** workflow. Azure:
+Secret `KOSLI_PUBLIC_API_TOKEN` (the workflows map it onto `KOSLI_API_TOKEN` in the job env,
+since that's the only env var name the Kosli CLI itself recognizes for `--api-token`); then
+run the **Bootstrap Kosli** workflow. Azure:
 `infra/deploy.sh` then `infra/setup-github-oidc.sh`, which prints the three `AZURE_*` secrets;
 set vars `AZURE_WEBAPP_NAME` and `AZURE_RESOURCE_GROUP`. Optional vars `MUTATION_THRESHOLD`,
 `SONAR_RESULT`, `KOSLI_DRY_RUN`, `REPORT_AZURE_ENV` tune the demo without code changes —

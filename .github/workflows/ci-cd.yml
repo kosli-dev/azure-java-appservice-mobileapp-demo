@@ -33,7 +33,7 @@ env:
   KOSLI_ORG: kosli-public
   KOSLI_FLOW: orders-api-ci
   KOSLI_TRAIL: ${{ github.sha }}
-  KOSLI_PUBLIC_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}
+  KOSLI_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}
   KOSLI_DRY_RUN: ${{ vars.KOSLI_DRY_RUN }}
   ARTIFACT_NAME: orders-api
   SONAR_RESULT: ${{ github.event.inputs.sonar_result || vars.SONAR_RESULT || 'pass' }}
