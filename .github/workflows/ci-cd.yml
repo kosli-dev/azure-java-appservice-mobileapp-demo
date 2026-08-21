@@ -1,0 +1,255 @@
+name: CI/CD
+
+# The demo pipeline for the orders-api component:
+#
+#   build-and-attest  build + test the Java service and attest every control to Kosli
+#   publish-gate      ask Kosli whether this component may be published
+#   deploy            deploy the approved artifact to Azure App Service
+#
+# The gate is a real gate: when a control fails (mutation testing does, by design) the
+# publish-gate job fails and nothing is deployed until the failure is fixed or waived.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sonar_result:
+        description: "Which SonarQube quality-gate report to import"
+        type: choice
+        options: [pass, fail]
+        default: pass
+      mutation_threshold:
+        description: "Mutation score threshold, in percent"
+        type: string
+        default: "85"
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: read
+
+env:
+  KOSLI_ORG: kosli-public
+  KOSLI_FLOW: orders-api-ci
+  KOSLI_TRAIL: ${{ github.sha }}
+  KOSLI_API_TOKEN: ${{ secrets.KOSLI_API_TOKEN }}
+  KOSLI_DRY_RUN: ${{ vars.KOSLI_DRY_RUN }}
+  ARTIFACT_NAME: orders-api
+  SONAR_RESULT: ${{ github.event.inputs.sonar_result || vars.SONAR_RESULT || 'pass' }}
+  MUTATION_THRESHOLD: ${{ github.event.inputs.mutation_threshold || vars.MUTATION_THRESHOLD || '85' }}
+
+jobs:
+  build-and-attest:
+    name: Build and attest
+    runs-on: ubuntu-latest
+    outputs:
+      fingerprint: ${{ steps.artifact.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Setup Kosli CLI
+        uses: kosli-dev/setup-cli-action@v5
+        with:
+          version: "2"
+
+      # ---------------------------------------------------------------- Kosli flow + trail
+      # The flow template is version-controlled with the code (kosli/flow-template.yml), so
+      # the component's definition of "done" changes through pull requests like anything else.
+      - name: Create or update the Kosli flow
+        run: |
+          kosli create flow "$KOSLI_FLOW" \
+            --template-file kosli/flow-template.yml \
+            --description "orders-api - Java backend on Azure App Service"
+
+      - name: Begin the Kosli trail for this commit
+        run: |
+          kosli begin trail "$KOSLI_TRAIL" \
+            --description "$(git log -1 --pretty=%s)"
+
+      # -------------------------------------------------------------------- 1. Peer review
+      - name: Attest the pull request
+        run: |
+          kosli attest pullrequest github \
+            --name pull-request \
+            --github-token "${{ secrets.GITHUB_TOKEN }}"
+
+      # ------------------------------------------------------------------ Build and unit test
+      - name: Build and test
+        run: mvn -B --no-transfer-progress verify
+
+      - name: Stage the deployable
+        run: |
+          mkdir -p deploy
+          # App Service's Java SE container runs /home/site/wwwroot/app.jar
+          cp target/orders-api.jar deploy/app.jar
+
+      # ------------------------------------------------------------- Artifact + provenance
+      - name: Attest the artifact
+        id: artifact
+        run: |
+          FINGERPRINT="$(kosli fingerprint deploy --artifact-type dir)"
+          echo "fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
+          # Every later attestation binds to this artifact via KOSLI_FINGERPRINT.
+          echo "KOSLI_FINGERPRINT=$FINGERPRINT" >> "$GITHUB_ENV"
+          kosli attest artifact deploy \
+            --artifact-type dir \
+            --name "$ARTIFACT_NAME"
+          {
+            echo "### Kosli"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Trail | [\`$KOSLI_TRAIL\`](https://app.kosli.com/$KOSLI_ORG/flows/$KOSLI_FLOW/trails/$KOSLI_TRAIL) |"
+            echo "| Artifact | \`$ARTIFACT_NAME\` |"
+            echo "| Fingerprint | \`$FINGERPRINT\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest the peer review evaluation
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/peer_review_attestation.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --commit "$GITHUB_SHA" \
+            --out peer-review.json
+          kosli attest custom \
+            --name "$ARTIFACT_NAME.peer-review" \
+            --type peer-review \
+            --attestation-data peer-review.json
+
+      - name: Attest the unit tests
+        run: |
+          kosli attest junit \
+            --name "$ARTIFACT_NAME.unit-tests" \
+            --results-dir target/surefire-reports
+
+      # ------------------------------------------------------------ 2. SonarQube quality gate
+      - name: Import and attest the SonarQube quality gate
+        run: |
+          python3 scripts/sonar_attestation.py \
+            --variant "$SONAR_RESULT" \
+            --commit "$GITHUB_SHA" \
+            --branch "${GITHUB_REF_NAME}" \
+            --out sonar-quality-gate.json
+          kosli attest custom \
+            --name "$ARTIFACT_NAME.sonar-quality-gate" \
+            --type sonarqube-quality-gate \
+            --attestation-data sonar-quality-gate.json \
+            --attachments sonar-quality-gate.json
+
+      # ----------------------------------------------------------------- 3. Mutation testing
+      - name: Run mutation testing
+        run: mvn -B --no-transfer-progress test-compile org.pitest:pitest-maven:mutationCoverage
+
+      - name: Attest the mutation testing results
+        run: |
+          python3 scripts/mutation_attestation.py \
+            --report target/pit-reports/mutations.xml \
+            --threshold "$MUTATION_THRESHOLD" \
+            --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --out mutation-testing.json
+          kosli attest custom \
+            --name "$ARTIFACT_NAME.mutation-tests" \
+            --type mutation-testing \
+            --attestation-data mutation-testing.json \
+            --attachments target/pit-reports
+
+      - name: Upload the deployable
+        uses: actions/upload-artifact@v7
+        with:
+          name: orders-api-jar
+          path: deploy/app.jar
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------------- 4. Publish gate
+  publish-gate:
+    name: May this component be published?
+    runs-on: ubuntu-latest
+    needs: build-and-attest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Kosli CLI
+        uses: kosli-dev/setup-cli-action@v5
+        with:
+          version: "2"
+
+      # The policy is kosli/policies/publish-gate.yml, created by the
+      # "Bootstrap Kosli" workflow. Exit code 0 means every control passed.
+      - name: Assert the publish-gate policy
+        run: |
+          kosli assert artifact \
+            --fingerprint "${{ needs.build-and-attest.outputs.fingerprint }}" \
+            --policy publish-gate
+
+      - name: Explain how to unblock
+        if: failure()
+        run: |
+          cat <<EOF
+          ==========================================================================
+          The publish gate blocked this component.
+
+          Trail:  https://app.kosli.com/${KOSLI_ORG}/flows/${KOSLI_FLOW}/trails/${KOSLI_TRAIL}
+          Policy: kosli/policies/publish-gate.yml
+
+          Either fix the failing control, or waive it with a recorded reason:
+
+            scripts/waive_attestation.sh \\
+              --trail "${KOSLI_TRAIL}" \\
+              --fingerprint "${{ needs.build-and-attest.outputs.fingerprint }}" \\
+              --reason "why this is acceptable, and what happens next"
+
+          ...then re-run this job.
+          ==========================================================================
+          EOF
+
+  deploy:
+    name: Deploy to Azure App Service
+    runs-on: ubuntu-latest
+    needs: [build-and-attest, publish-gate]
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.webapp-url }}
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: orders-api-jar
+          path: deploy
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy
+        id: deploy
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package: deploy
+
+      - name: Smoke test
+        run: |
+          URL="https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net/api/health"
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 10 "$URL"; then
+              echo
+              echo "orders-api is up"
+              exit 0
+            fi
+            echo "waiting for the app to start (attempt $attempt)..."
+            sleep 10
+          done
+          echo "app did not become healthy" >&2
+          exit 1

@@ -1,0 +1,57 @@
+name: Bootstrap Kosli
+
+# Creates (or updates) the org-level Kosli objects the pipeline depends on:
+#   * the custom attestation types, including the jq rules that decide compliance
+#   * the publish-gate policy that the CI/CD pipeline asserts against
+#
+# Run it once before the first pipeline run, and again after editing anything under kosli/.
+# It is idempotent: Kosli versions the changed objects instead of duplicating them.
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_environment:
+        description: "Also create the Azure environment and attach the deploy-gate policy"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  KOSLI_ORG: kosli-public
+  KOSLI_API_TOKEN: ${{ secrets.KOSLI_API_TOKEN }}
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Kosli CLI
+        uses: kosli-dev/setup-cli-action@v5
+        with:
+          version: "2"
+
+      - name: Create attestation types and the publish-gate policy
+        run: ./scripts/bootstrap_kosli.sh
+
+      - name: Create the Azure environment and attach the deploy gate
+        if: ${{ inputs.create_environment }}
+        env:
+          KOSLI_ENVIRONMENT: ${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }}
+        run: |
+          kosli create environment "$KOSLI_ENVIRONMENT" \
+            --type azure-apps \
+            --description "Azure App Service running orders-api"
+          kosli create policy prod-deploy-gate kosli/policies/prod-deploy-gate.yml \
+            --type env \
+            --description "Controls an artifact must satisfy to run in production"
+          kosli attach-policy prod-deploy-gate --environment "$KOSLI_ENVIRONMENT"
+
+      - name: Show what exists now
+        run: |
+          echo "### Attestation types" >> "$GITHUB_STEP_SUMMARY"
+          kosli list attestation-types --output table >> "$GITHUB_STEP_SUMMARY" || true
+          echo "### Policies" >> "$GITHUB_STEP_SUMMARY"
+          kosli list policies --output table >> "$GITHUB_STEP_SUMMARY" || true

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mutation-testing",
+  "description": "Mutation testing results (PIT / pitest) for a component, with the threshold the score is judged against.",
+  "type": "object",
+  "properties": {
+    "tool": { "type": "string" },
+    "total_mutations": { "type": "integer", "minimum": 0 },
+    "killed": { "type": "integer", "minimum": 0 },
+    "timed_out": { "type": "integer", "minimum": 0 },
+    "survived": { "type": "integer", "minimum": 0 },
+    "no_coverage": { "type": "integer", "minimum": 0 },
+    "mutation_score": { "type": "number", "minimum": 0, "maximum": 100 },
+    "threshold": { "type": "number", "minimum": 0, "maximum": 100 },
+    "report_url": { "type": "string" },
+    "surviving_mutants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "class": { "type": "string" },
+          "method": { "type": "string" },
+          "line": { "type": "integer" },
+          "mutator": { "type": "string" },
+          "status": { "type": "string" },
+          "description": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "required": ["tool", "total_mutations", "mutation_score", "threshold"],
+  "additionalProperties": true
+}

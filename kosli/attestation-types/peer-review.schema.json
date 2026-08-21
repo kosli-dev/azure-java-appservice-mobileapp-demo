@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "peer-review",
+  "description": "Facts about the pull request that produced a commit, used to evaluate the peer review control.",
+  "type": "object",
+  "properties": {
+    "commit": {
+      "type": "string",
+      "description": "The merge commit the pull request produced."
+    },
+    "pull_request_url": {
+      "type": ["string", "null"],
+      "description": "Link to the pull request, null when the commit has no pull request."
+    },
+    "pull_request_number": {
+      "type": ["integer", "null"]
+    },
+    "author": {
+      "type": ["string", "null"],
+      "description": "Login of the pull request author."
+    },
+    "approvers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Distinct logins that submitted an APPROVED review."
+    },
+    "distinct_approvers": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "independent_approval": {
+      "type": "boolean",
+      "description": "True when at least one approver contributed no commits to the branch."
+    },
+    "committers": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "changed_files": {
+      "type": ["integer", "null"]
+    }
+  },
+  "required": [
+    "commit",
+    "pull_request_url",
+    "approvers",
+    "distinct_approvers",
+    "independent_approval"
+  ],
+  "additionalProperties": true
+}

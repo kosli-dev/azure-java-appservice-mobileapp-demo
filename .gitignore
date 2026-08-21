@@ -1,0 +1,15 @@
+target/
+deploy/
+!deploy/.gitkeep
+
+# Attestation data generated during a pipeline run
+peer-review.json
+mutation-testing.json
+sonar-quality-gate.json
+
+.idea/
+*.iml
+.vscode/
+.DS_Store
+__pycache__/
+*.pyc
