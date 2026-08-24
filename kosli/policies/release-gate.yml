@@ -7,15 +7,15 @@
 #     --description "Controls a release of the order system must satisfy"
 #
 # Enforced in CI with:
-#   kosli assert artifact --fingerprint "$FINGERPRINT" --policy release-gate --flow order-system-release
+#   kosli assert artifact --fingerprint "$FINGERPRINT" --policy release-gate --flow order-system-ci
 #
-# It runs *after* the manual approval on the release workflow, so pressing "continue" is not
-# the authority: the integration test run has to have been reported to the release trail, and
-# judged compliant by the jq rules on the `integration-test` type, or this fails.
+# It runs *after* the manual approval on the pipeline, so pressing "continue" is not the
+# authority: the integration test run has to have been reported to the trail, and judged
+# compliant by the jq rules on the `integration-test` type, or this fails.
 #
-# No `attestations:` list, unlike publish-gate.yml: that list matches attestations on the
-# artifact, and both release controls are attested at trail level. `trail-compliance` is what
-# requires them.
+# No `attestations:` list, unlike publish-gate.yml: `trail-compliance` already requires every
+# control in order-system-ci.yml - the backend's, both mobile scans, the integration test run
+# and the approval - which is exactly the release control set.
 _schema: https://docs.kosli.com/schemas/policy/v1
 
 artifacts:
@@ -24,7 +24,6 @@ artifacts:
   provenance:
     required: true
 
-  # Everything order-system-release.yml asks for: all three components attested to the
-  # trail, and the integration test run reported and compliant.
+  # Everything order-system-ci.yml asks for.
   trail-compliance:
     required: true

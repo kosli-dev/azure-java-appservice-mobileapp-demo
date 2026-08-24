@@ -13,20 +13,28 @@ A Kosli demo built for a customer evaluation. It covers **points 1, 2 and 3** of
 - **Point 2** — the Mobile Orders mobile component (Android + iOS), scanned from source with
   mobsfscan, the SARIF report attested as a custom type whose jq rules are the gate. Merged in
   from the `mobile-app-example` repo; it was developed there and its git history lives there.
-- **Point 3** — a release process. A `v*` tag builds both components as one release, an
-  integration test run is reported to the release trail by a separate manual workflow
-  (pass or fail, from canned JSON), and a protected GitHub environment halts the release
-  until someone approves — after which Kosli, not the approver, decides. Only once the gate
-  opens is the release published and deployed to App Service. **`ci-cd.yml` no longer
-  deploys**: a tagged, gated release is the only route to the server.
+- **Point 3** — a release process. An integration test run is reported to the trail by a
+  separate manual workflow (pass or fail, from canned JSON), and a protected GitHub
+  environment halts the pipeline until someone approves — after which Kosli, not the
+  approver, decides. Only once the release gate opens is the build deployed to App Service.
 
-Kosli org: `kosli-public` for all three.
+Kosli org: `kosli-public`.
 
-| Component | Flow | Artifacts | Template |
-| --- | --- | --- | --- |
-| Java backend | `orders-api-ci` | `orders-api` | `kosli/flow-templates/orders-api-ci.yml` |
-| Mobile app | `mobileorders` | `mobileorders-android`, `mobileorders-ios` | `kosli/flow-templates/mobileorders.yml` |
-| Release | `order-system-release` | all three of the above, rebuilt from the tag | `kosli/flow-templates/order-system-release.yml` |
+**One pipeline, one flow** (customer's call, 2026-08-24). `ci-cd.yml` and `mobileorders.yml`
+are gone and `release.yml` became `ci-build.yml`, triggered by a push to `main` rather than a
+tag. Everything the three workflows attested now lands on one flow, `order-system-ci`, whose
+trail is the commit:
+
+| Artifact | Attestations |
+| --- | --- |
+| `orders-api` | `peer-review`, `unit-tests`, `sonar-quality-gate`, `mutation-tests` |
+| `mobileorders-android` | `mobile-sast` |
+| `mobileorders-ios` | `mobile-sast` |
+| (trail level) | `pull-request`, `integration-tests`, `release-approval` |
+
+Template: `kosli/flow-templates/order-system-ci.yml`. The `orders-api-ci`, `mobileorders` and
+`order-system-release` flows still exist in `kosli-public` with their history; nothing writes
+to them any more.
 
 ## State
 
@@ -39,15 +47,14 @@ Verified before pushing:
   threshold, so the mutation control fails by design.
 - Every Kosli command dry-run against CLI **v2.38.0**.
 - `kosli/policies/*.yml` validated against `https://docs.kosli.com/schemas/policy/v1.json`.
-- `kosli/flow-templates/orders-api-ci.yml` validated against the `Template` model in Kosli's
-  OpenAPI spec.
+- `kosli/flow-templates/*.yml` validated against the `Template` model in Kosli's OpenAPI spec.
 - `actionlint` (with shellcheck), `shellcheck`, and `bicep build` all clean.
 
 For the mobile half, verified in the `mobile-app-example` repo before the merge: mobsfscan
 runs clean on both platforms (Android tuned to no error-level findings, iOS all `note`), and
-the flow, type and gate ran green in Actions. What the merge itself changed — the flow-template
-paths, the folded-in `mobile-sast` bootstrap, the `create flow` step moving into
-`mobileorders.yml`, the CLI pin — has not been run.
+the flow, type and gate ran green in Actions. Since the collapse into one pipeline, the mobile
+steps live in `ci-build.yml` and `make scan` was re-run locally against both platforms with
+all three `mobile-sast` rules returning true.
 
 For the release half (point 3), verified locally: the new flow template and
 `kosli/policies/release-gate.yml` validate against the published schemas; every new Kosli
@@ -62,9 +69,9 @@ Not verified, and the first live run is the test of it:
   short template name (`peer-review`) rather than the dotted CLI form
   (`orders-api.peer-review`). Evidence says short — `kosli attest junit --help` documents
   `--name yourTemplateArtifactName.yourAttestationName`, i.e. the dotted form is addressing,
-  not the stored name. If it mismatches, the gate fails for the wrong reason; the fix is to
-  drop the `attestations:` list and lean on `trail-compliance: required: true`, which
-  enforces the whole flow template anyway.
+  not the stored name. This is now load-bearing: `publish-gate.yml` has no
+  `trail-compliance` any more (it runs before the release controls exist), so that list is the
+  entire policy. If it mismatches, the publish gate fails for the wrong reason on every run.
 - Whether the custom attestation type names collide with existing types in `kosli-public`.
   Run `kosli list attestation-types` before the first bootstrap — re-running it would version
   an existing type rather than create a new one.
@@ -74,14 +81,11 @@ Not verified, and the first live run is the test of it:
   compliance turns out not to include trail compliance, the gate passes when it should not —
   which is the one failure mode that would be invisible in the demo. Check the first blocked
   release actually blocks.
-- Whether the release trail's artifact fingerprints match the ones from the component
-  pipelines. They are rebuilds, so they may well differ; nothing depends on them matching,
-  and the README says so.
 - `actions/upload-artifact@v7` + `actions/download-artifact@v7`. Matched majors on purpose;
   upload's latest is v7 while download's is v8, so v7/v7 is the coherent pair.
 - The SonarCloud webhook path, end to end: whether `SonarSource/sonarqube-scan-action@v5`
   passes `-Dsonar.analysis.kosli_*` args through to the scanner unmodified, whether the
-  webhook actually fires with enough payload for Kosli to resolve `orders-api-ci`'s trail and
+  webhook actually fires with enough payload for Kosli to resolve `order-system-ci`'s trail and
   the `orders-api` artifact by fingerprint, and whether `sonar-project.properties`'
   `kosli-dev` / `kosli-dev_azure-java-appservice-demo` org/project-key guesses are the real
   ones (fix them there if not — nothing else hardcodes them). Also whether SonarCloud's
@@ -134,7 +138,7 @@ separately via `target_artifacts` + `artifact_fingerprint`. See `scripts/waive_a
 webhook URL/secret that goes on the SonarCloud project; the scan then attests straight to
 Kosli when analysis finishes, using `sonar.analysis.kosli_flow` / `kosli_trail` /
 `kosli_attestation` / `kosli_git_commit` / `kosli_artifact_fingerprint` scanner properties set
-in `.github/workflows/ci-cd.yml` to address the right trail and artifact. The alternative was
+in `.github/workflows/ci-build.yml` to address the right trail and artifact. The alternative was
 `kosli attest sonar --sonar-api-token ... --sonar-working-dir .scannerwork` (CLI polls the
 Sonar API after the scan); webhook was chosen because it needed no Sonar API token stored
 alongside `KOSLI_API_TOKEN`, and it is the integration path Kosli's own docs lead with. Either
@@ -142,43 +146,40 @@ way the flow template and policies use the built-in `sonar` attestation type, no
 one — `custom:sonarqube-quality-gate` (and its schema, its bootstrap block, and the canned
 `sonar/quality-gate-{pass,fail}.json` fixtures) were removed rather than kept alongside it.
 
-**One mobile flow, two artifacts, not two flows.** `mobileorders-android` and `mobileorders-ios`
-are artifacts of the same flow, so a trail is compliant only once both have been attested. Two
-path-filtered per-platform workflows would leave trails permanently missing an artifact. Hence
-one workflow with a platform matrix, and `begin trail` in its own job so the legs cannot race
-creating the trail.
+**Both mobile apps are artifacts of the system flow, not of a flow of their own.** A trail is
+compliant only once both have been packaged, scanned and found clean, so a commit cannot be
+released with one platform missing. They are built and scanned in the same job as the backend,
+which is also why there is no matrix and no separate `begin trail` job any more: nothing can
+race a single sequential job.
 
 **`mobile-sast`'s severity rule reads the effective SARIF level, not `.level`.** A result's
 `level` is optional; when absent the level comes from the rule's `defaultConfiguration`, then
 the spec default of `warning`. mobsfscan omits it often, so `.level == "error"` alone silently
 ignores those findings. The rule in `scripts/bootstrap_kosli.sh` walks the fallback chain.
 
-**`mobileorders` is gated by `kosli assert artifact` with no `--policy`.** The `publish-gate`
-policy spells out the orders-api controls (`peer-review`, `unit-tests`, …), so applying it to a
-mobile artifact would demand attestations that component never makes. Flow-template compliance
-is the gate there. A shared policy would mean either a mobile-specific policy or dropping
-`attestations:` from `publish-gate` in favour of `trail-compliance` alone.
+**Two gates, and they are deliberately asymmetric.** `publish-gate` judges the backend's own
+controls and carries **no** `trail-compliance`, because it runs mid-pipeline, before the
+integration test run and the approval exist — requiring the whole trail there would block every
+run. `release-gate` is the mirror image: no `attestations:` list, because
+`trail-compliance: required: true` already requires every control in `order-system-ci.yml`,
+including both mobile scans. There is no mobile-specific gate: the mobile apps are covered by
+trail compliance at the release gate. Do not "tidy" either policy into looking like the other.
 
 **`mobile-sast` has jq rules but no JSON Schema**, unlike the three orders-api types. Nothing
 principled — SARIF's schema is large and the jq rules already pin `version` and the tool name.
 
-**Deploy is the last step of the release, and it comes after the GitHub release is
-published.** The published release is the immutable record of what the gate approved;
-deploying consumes it, which is what makes re-deploying or rolling back to a tag an ordinary
-operation. The deploy job downloads the artifact the gate approved rather than rebuilding, so
-the fingerprint that reaches App Service is the one Kosli judged. A failed deploy therefore
-leaves a published release and prod on the old version — the environment snapshot, not the
-GitHub release, is what says what is running.
+**Deploy is the last job, and the release gate is the only way to reach it.** The deploy job
+downloads the artifact the gates approved rather than rebuilding, so the fingerprint that
+reaches App Service is the one Kosli judged. Nothing else in the repo deploys.
 
-**The deploy job was removed from `ci-cd.yml`** (customer's call, 2026-08-24). It built,
-attested and gated on every push to main *and* deployed; now it stops at the gate. The demo
-story is "nothing reaches production except through the release gate", and two routes to the
-same App Service would have contradicted it. `id-token: write` went with it, since the Azure
-OIDC login was its only user.
+**There is no GitHub release object** (customer's call, 2026-08-24). `gh release create` needs
+a tag and the pipeline is triggered by a push to `main`, so publishing a release would have
+meant inventing a tag per build. Kosli holds the record of what was approved; GitHub holds
+none. If tags come back, the release job comes with them.
 
-**The approver is read from the approvals API, not from `github.actor`.** For a tagged
-release `github.actor` is whoever pushed the tag, which is exactly the person the approval
-is supposed to be independent of. `.github/actions/get-github-workflow-approver` calls
+**The approver is read from the approvals API, not from `github.actor`.** `github.actor` is
+whoever merged the pull request, which is exactly the person the approval is supposed to be
+independent of. `.github/actions/get-github-workflow-approver` calls
 `GET /repos/{repo}/actions/runs/{run_id}/approvals` and picks the entry for the
 `production-release` environment; the gate job attests it as `release-approval`. Ported from
 `kosli-dev/github-release-example`, which does the same thing against a `Production`
@@ -198,24 +199,14 @@ the job then runs `kosli assert artifact --policy release-gate`. That ordering i
 point of point 3 — a human can start the gate, a human cannot talk it into passing. Putting
 the assert in the build job instead would make the approval the decision.
 
-**`integration-tests` is a trail-level attestation.** It is about the combination of the
-components, not any one binary, so it hangs off the trail. That is also why `release-gate.yml`
-has no `attestations:` list, unlike `publish-gate.yml`: that list matches attestations on the
-*artifact*, and this one is not on an artifact. `trail-compliance: required: true` plus the
-flow template is what carries the control set. Do not "fix" the asymmetry by copying the list
-across.
+**`integration-tests` and `release-approval` are trail-level attestations.** They are about
+the release — the combination of the components, and the decision to ship them — not about any
+one binary, so they hang off the trail.
 
-**The mobile apps are re-scanned during the release, not just repackaged.** The release
-rebuilds the zips, so the component pipeline's SARIF describes a different fingerprint;
-inheriting it would mean the release shipped an artifact nothing had scanned. `make scan` runs
-in the release job and `mobile-sast` is required per mobile artifact in
-`order-system-release.yml`, so the scan is a release control, not a formality. Cost is ~30s of
-mobsfscan per platform in the release build.
-
-**The release rebuilds all three artifacts rather than referencing the CI fingerprints.**
-Looking them up would mean `kosli list artifacts` plus JSON wrangling for three components,
-and the release trail would have no provenance of its own. Rebuilding costs one `mvn verify`
-and two `zip`s. The cost is that the fingerprints are not guaranteed to equal the CI ones.
+**Everything is built once, in one job.** The backend JAR and both mobile zips come from the
+same checkout, are fingerprinted there, and every attestation binds to those fingerprints. No
+rebuild happens later, so there is no question of the gated fingerprint differing from the
+deployed one. Cost is ~30s of mobsfscan per platform on top of the Maven build.
 
 **The integration test workflow always succeeds, whichever variant you pick.** Same rule as
 everywhere else here: scripts report facts, Kosli decides. `fail` is the default input so the
@@ -245,21 +236,22 @@ installed.
 - Attestation types and policies are **org-level** objects in `kosli-public`, created by the
   `Bootstrap Kosli` workflow. They are not scoped to this repo.
 - **The `production-release` environment needs required reviewers set in the GitHub UI.**
-  Nothing in the repo can do that. Without them the release workflow runs straight through
-  and there is no halt, which is the demo.
+  Nothing in the repo can do that. Without them the pipeline runs straight through, there is
+  no halt, and the release gate fails anyway: `get-github-workflow-approver` finds no approval
+  entry to attest.
 - **`KOSLI_DRY_RUN=true` makes the release gate pass no matter what** — `kosli assert` exits 0
   in dry-run mode. Same for the publish gate. Fine for rehearsing the pipeline, useless for
   rehearsing the gate.
-- **Re-running the gate job re-attests the same approver.** The approvals API returns the
+- **Re-running the release gate job re-attests the same approver.** The approvals API returns the
   run's approvals, and a re-run does not create a new one, so a blocked release that is
   re-reported and re-run records the original approval again. Fine here; worth knowing before
   anyone reads the trail as "approved twice".
-- **The release deploy job uses the `production` environment, the gate uses
+- **The deploy job uses the `production` environment, the release gate uses
   `production-release`.** Two environments on purpose: the halt belongs to the gate, and
   `production` carries the deployment URL that shows up in the Actions UI.
-- **The release trail is named after the tag**, not the SHA, because the manually-run
-  integration test workflow has to be able to address it. Re-tagging the same name is
-  therefore re-using a trail.
+- **The trail is the commit SHA**, which the manually-run integration test workflow takes as
+  its `commit` input. One trail per push to `main`, so a re-run of a build reuses its trail
+  and its attestations.
 - **Neither mobile app compiles, and nothing checks that they do.** No Gradle build, no Xcode
   project; `androidx.appcompat` is an unresolved import. mobsfscan is pattern-based and does
   not care. The artifacts are zips of the source, so the fingerprint-and-gate half is real.
@@ -267,8 +259,8 @@ installed.
   requirements — mobsfscan raises error-level findings without them. Same for the empty
   `NSAppTransportSecurity` dict: ATS defaults are secure, `NSAllowsArbitraryLoads` is what
   trips the scanner.
-- **The mobile gate has no failing case.** Both platforms scan clean, so it always passes.
-  Showing it block needs a commit that introduces a weakness.
+- **The mobile scans have no failing case.** Both platforms scan clean, so `mobile-sast` never
+  blocks. Showing it block needs a commit that introduces a weakness.
 - **Nothing validates the jq rules automatically.** All three `mobile-sast` rules were run
   with `jq` against real `make scan` output at merge time and returned `true`; there is no
   check that keeps them honest, so a later edit's breakage is first seen in a workflow run.
@@ -277,8 +269,8 @@ installed.
 
 Secret `KOSLI_PUBLIC_API_TOKEN` (the workflows map it onto `KOSLI_API_TOKEN` in the job env,
 since that's the only env var name the Kosli CLI itself recognizes for `--api-token`); then
-run the **Bootstrap Kosli** workflow (re-run it after this change: it now also creates the
-`integration-test` type and the `release-gate` policy). Enable the Sonar integration in the
+run the **Bootstrap Kosli** workflow (re-run it after any change under `kosli/`: it creates
+the five custom types and both policies). Enable the Sonar integration in the
 Kosli app (org-level) and put its webhook URL/secret on the SonarCloud project; secret
 `SONAR_TOKEN` for the scan step, and turn off SonarCloud's Automatic Analysis for the project.
 Add required reviewers to the `production-release` GitHub environment, or the release never
@@ -292,7 +284,7 @@ halts. Azure: `infra/deploy.sh` then `infra/setup-github-oidc.sh`, which prints 
 - **Real mobile builds** — `make apk` in a container replacing the Android zip, then
   `make ipa` on a macOS runner. Xcode cannot be containerised, so unlike `scan` and `apk` it
   will not run on Linux.
-- **A real integration suite** — the release reports one of two canned runs under
+- **A real integration suite** — the pipeline reports one of two canned runs under
   `integration-tests/`. A suite that actually drives the deployed backend from the mobile
   clients replaces one workflow step; the type, the template and the gate stay as they are.
 - **Point 4** — deployment gate: `kosli/policies/prod-deploy-gate.yml` exists but is not

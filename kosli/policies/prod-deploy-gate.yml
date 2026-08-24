@@ -8,8 +8,8 @@
 #   kosli create policy prod-deploy-gate kosli/policies/prod-deploy-gate.yml --type env
 #   kosli attach-policy prod-deploy-gate --environment azure-appservice-prod
 #
-# It is intentionally the publish gate plus whatever the integration-test flow adds, so the
-# deploy decision is strictly stronger than the publish decision.
+# It is the publish gate's controls plus whole-trail compliance, so what runs in production is
+# judged at least as strictly as what the pipeline released.
 _schema: https://docs.kosli.com/schemas/policy/v1
 
 artifacts:

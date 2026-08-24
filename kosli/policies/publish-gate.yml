@@ -7,7 +7,7 @@
 #     --description "Controls a component must satisfy before it is published"
 #
 # Enforced in CI with:
-#   kosli assert artifact --fingerprint "$FINGERPRINT" --policy publish-gate --flow orders-api-ci
+#   kosli assert artifact --fingerprint "$FINGERPRINT" --policy publish-gate --flow order-system-ci
 #
 # Exit code 0 = may be published. Non-zero = blocked, with the failing controls printed.
 _schema: https://docs.kosli.com/schemas/policy/v1
@@ -17,13 +17,9 @@ artifacts:
   provenance:
     required: true
 
-  # Everything the flow template asks for must be present and compliant.
-  trail-compliance:
-    required: true
-
-  # The individual controls, spelled out. Listing them here (as well as relying on
-  # trail-compliance above) keeps the policy readable as a control statement and lets the
-  # same policy be reused by components whose flow templates differ.
+  # No `trail-compliance` here, unlike release-gate.yml: this gate runs mid-pipeline, before
+  # the integration test run and the approval exist, so requiring the whole trail would
+  # always block. The component's own controls are what it judges.
   attestations:
     - name: peer-review
       type: custom:peer-review

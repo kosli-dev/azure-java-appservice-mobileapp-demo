@@ -1,6 +1,7 @@
 name: Report integration test result
 
-# Step 2 of the release process: report the integration test run for a release to Kosli.
+# Reports the integration test run for a commit to Kosli, between the build and the release
+# gate in the CI build pipeline.
 #
 # There is no real integration suite in this demo, so the run is one of two canned reports
 # under integration-tests/. Which one you pick does not decide anything here - the workflow
@@ -11,8 +12,8 @@ name: Report integration test result
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Release tag the run belongs to (the trail name, e.g. v0.0.1)"
+      commit:
+        description: "Commit SHA the run belongs to (the trail name, from the CI build run)"
         type: string
         required: true
       result:
@@ -26,8 +27,8 @@ permissions:
 
 env:
   KOSLI_ORG: kosli-public
-  KOSLI_FLOW: order-system-release
-  KOSLI_TRAIL: ${{ inputs.tag }}
+  KOSLI_FLOW: order-system-ci
+  KOSLI_TRAIL: ${{ inputs.commit }}
   KOSLI_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}
   KOSLI_DRY_RUN: ${{ vars.KOSLI_DRY_RUN }}
 
@@ -43,7 +44,7 @@ jobs:
         with:
           version: "2"
 
-      # Stamp the canned report with this release and this run, so the attestation points
+      # Stamp the canned report with this commit and this run, so the attestation points
       # back at where it came from.
       - name: Prepare the report
         env:
@@ -73,11 +74,11 @@ jobs:
             echo ""
             echo "| | |"
             echo "|---|---|"
-            echo "| Release | \`$KOSLI_TRAIL\` |"
+            echo "| Commit | \`$KOSLI_TRAIL\` |"
             echo "| Report | \`integration-tests/result-${VARIANT}.json\` |"
             echo "| Trail | [\`$KOSLI_TRAIL\`](https://app.kosli.com/$KOSLI_ORG/flows/$KOSLI_FLOW/trails/$KOSLI_TRAIL) |"
             echo ""
             echo "Kosli evaluated the report against the rules on the \`integration-test\`"
-            echo "attestation type. Approve the **release-gate** job on the Release workflow"
-            echo "for \`$KOSLI_TRAIL\` to see what it decided."
+            echo "attestation type. Approve the **release-gate** job on the CI build run for"
+            echo "\`$KOSLI_TRAIL\` to see what it decided."
           } >> "$GITHUB_STEP_SUMMARY"
