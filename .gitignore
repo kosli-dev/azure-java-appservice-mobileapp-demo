@@ -1,6 +1,9 @@
 target/
-deploy/
+# deploy/* (not deploy/) so the negations below can re-include specific tracked files -
+# git does not descend into a wholesale-ignored directory to apply per-file negations.
+deploy/*
 !deploy/.gitkeep
+!deploy/.kosli_ignore
 .scannerwork/
 
 # Attestation data generated during a pipeline run
