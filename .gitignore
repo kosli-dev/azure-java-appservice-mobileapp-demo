@@ -1,11 +1,11 @@
 target/
 deploy/
 !deploy/.gitkeep
+.scannerwork/
 
 # Attestation data generated during a pipeline run
 peer-review.json
 mutation-testing.json
-sonar-quality-gate.json
 
 .idea/
 *.iml

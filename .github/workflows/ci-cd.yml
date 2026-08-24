@@ -14,11 +14,6 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      sonar_result:
-        description: "Which SonarQube quality-gate report to import"
-        type: choice
-        options: [pass, fail]
-        default: pass
       mutation_threshold:
         description: "Mutation score threshold, in percent"
         type: string
@@ -36,7 +31,6 @@ env:
   KOSLI_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}
   KOSLI_DRY_RUN: ${{ vars.KOSLI_DRY_RUN }}
   ARTIFACT_NAME: orders-api
-  SONAR_RESULT: ${{ github.event.inputs.sonar_result || vars.SONAR_RESULT || 'pass' }}
   MUTATION_THRESHOLD: ${{ github.event.inputs.mutation_threshold || vars.MUTATION_THRESHOLD || '85' }}
 
 jobs:
@@ -134,18 +128,21 @@ jobs:
             --results-dir target/surefire-reports
 
       # ------------------------------------------------------------ 2. SonarQube quality gate
-      - name: Import and attest the SonarQube quality gate
-        run: |
-          python3 scripts/sonar_attestation.py \
-            --variant "$SONAR_RESULT" \
-            --commit "$GITHUB_SHA" \
-            --branch "${GITHUB_REF_NAME}" \
-            --out sonar-quality-gate.json
-          kosli attest custom \
-            --name "$ARTIFACT_NAME.sonar-quality-gate" \
-            --type sonarqube-quality-gate \
-            --attestation-data sonar-quality-gate.json \
-            --attachments sonar-quality-gate.json
+      # No `kosli attest` call here: the org's Sonar integration (Kosli Docs > Integrations >
+      # Sonar) has a webhook configured on the SonarCloud project, so SonarCloud attests the
+      # quality gate result straight to this trail once the scan below completes. The
+      # sonar.analysis.kosli_* args are what tell it which flow/trail/artifact to attest to.
+      - name: Run the SonarCloud scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.analysis.kosli_flow=${{ env.KOSLI_FLOW }}
+            -Dsonar.analysis.kosli_trail=${{ env.KOSLI_TRAIL }}
+            -Dsonar.analysis.kosli_attestation=sonar-quality-gate
+            -Dsonar.analysis.kosli_git_commit=${{ github.sha }}
+            -Dsonar.analysis.kosli_artifact_fingerprint=${{ env.KOSLI_FINGERPRINT }}
 
       # ----------------------------------------------------------------- 3. Mutation testing
       - name: Run mutation testing
