@@ -187,9 +187,8 @@ jobs:
           make scan PLATFORM=android
           make scan PLATFORM=ios
 
-      # --fingerprint, not --artifact-type: KOSLI_FINGERPRINT is still the backend's, and the
-      # two flags are mutually exclusive. Naming each zip's own fingerprint is also what puts
-      # the scan on the app rather than on the trail.
+      # KOSLI_FINGERPRINT is the backend's digest in this job: it conflicts with
+      # --artifact-type, and the scan belongs to the zip, not to the backend.
       - name: Attest the mobile scans
         run: |
           for platform in android ios; do
