@@ -1,0 +1,91 @@
+name: Mobile Pay
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  KOSLI_ORG: kosli-public
+  KOSLI_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}
+  KOSLI_FLOW: mobilepay
+
+jobs:
+  # Own job so the matrix legs cannot race creating the same trail.
+  trail:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Kosli CLI
+        uses: kosli-dev/setup-cli-action@v5
+        with:
+          version: "2"
+
+      # The flow template is version-controlled with the code
+      # (kosli/flow-templates/mobilepay.yml), so the component's definition of "done"
+      # changes through pull requests like anything else.
+      - name: Create or update the Kosli flow
+        run: |
+          kosli create flow "${KOSLI_FLOW}" \
+            --template-file kosli/flow-templates/mobilepay.yml \
+            --description "Mobile Pay - the mobile component (Android/iOS) of the demo app."
+
+      - name: Begin Kosli trail
+        run: kosli begin trail "${GITHUB_SHA}" --flow "${KOSLI_FLOW}"
+
+  attest:
+    needs: trail
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            runner: ubuntu-latest
+          # ubuntu, not macos: mobsfscan reads iOS source, so no Xcode is needed.
+          - platform: ios
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    env:
+      # Must match the paths the Makefile writes.
+      ARTIFACT: build/mobilepay-${{ matrix.platform }}.zip
+      SARIF: build/mobsfscan-${{ matrix.platform }}.sarif
+      ARTIFACT_NAME: mobilepay-${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Kosli CLI
+        uses: kosli-dev/setup-cli-action@v5
+        with:
+          version: "2"
+
+      - name: Build
+        run: make package PLATFORM=${{ matrix.platform }}
+
+      - name: Scan
+        run: make scan PLATFORM=${{ matrix.platform }}
+
+      - name: Attest artifact
+        run: |
+          kosli attest artifact "${ARTIFACT}" \
+            --artifact-type file \
+            --flow "${KOSLI_FLOW}" \
+            --trail "${GITHUB_SHA}" \
+            --name "${ARTIFACT_NAME}"
+
+      - name: Attest scan result
+        run: |
+          kosli attest custom "${ARTIFACT}" \
+            --artifact-type file \
+            --type mobile-sast \
+            --name mobile-sast \
+            --attestation-data "${SARIF}" \
+            --flow "${KOSLI_FLOW}" \
+            --trail "${GITHUB_SHA}"
+
+      - name: Publish gate -- may this artifact be published?
+        run: |
+          kosli assert artifact "${ARTIFACT}" \
+            --artifact-type file \
+            --flow "${KOSLI_FLOW}"

@@ -5,12 +5,21 @@ file is the reasoning behind it, plus what is and is not verified.
 
 ## What this is
 
-A Kosli demo built for a customer evaluation. It covers **point 1** of their scenario: a Java
-component deployed to Azure App Service whose peer review, SonarQube quality gate, unit tests
-and mutation testing are all attested to Kosli, and whose right to be published is decided by
-a Kosli policy rather than by a green pipeline.
+A Kosli demo built for a customer evaluation. It covers **points 1 and 2** of their scenario:
 
-Kosli org: `kosli-public`. Flow: `orders-api-ci`. Artifact name: `orders-api`.
+- **Point 1** — a Java component deployed to Azure App Service whose peer review, SonarQube
+  quality gate, unit tests and mutation testing are all attested to Kosli, and whose right to
+  be published is decided by a Kosli policy rather than by a green pipeline.
+- **Point 2** — the Mobile Pay mobile component (Android + iOS), scanned from source with
+  mobsfscan, the SARIF report attested as a custom type whose jq rules are the gate. Merged in
+  from the `mobile-app-example` repo; it was developed there and its git history lives there.
+
+Kosli org: `kosli-public` for both.
+
+| Component | Flow | Artifacts | Template |
+| --- | --- | --- | --- |
+| Java backend | `orders-api-ci` | `orders-api` | `kosli/flow-templates/orders-api-ci.yml` |
+| Mobile app | `mobilepay` | `mobilepay-android`, `mobilepay-ios` | `kosli/flow-templates/mobilepay.yml` |
 
 ## State
 
@@ -23,8 +32,14 @@ Verified before pushing:
   threshold, so the mutation control fails by design.
 - Every Kosli command dry-run against CLI **v2.38.0**.
 - `kosli/policies/*.yml` validated against `https://docs.kosli.com/schemas/policy/v1.json`.
-- `kosli/flow-template.yml` validated against the `Template` model in Kosli's OpenAPI spec.
+- `kosli/flow-templates/orders-api-ci.yml` validated against the `Template` model in Kosli's OpenAPI spec.
 - `actionlint` (with shellcheck), `shellcheck`, and `bicep build` all clean.
+
+For the mobile half, verified in the `mobile-app-example` repo before the merge: mobsfscan
+runs clean on both platforms (Android tuned to no error-level findings, iOS all `note`), and
+the flow, type and gate ran green in Actions. What the merge itself changed — the flow-template
+paths, the folded-in `mobile-sast` bootstrap, the `create flow` step moving into
+`mobilepay.yml`, the CLI pin — has not been run.
 
 Not verified, and the first live run is the test of it:
 
@@ -86,6 +101,31 @@ separately via `target_artifacts` + `artifact_fingerprint`. See `scripts/waive_a
 switching to it later means changing the flow template and policy from
 `custom:sonarqube-quality-gate` to the built-in `sonar` type, and swapping one pipeline step.
 
+**One mobile flow, two artifacts, not two flows.** `mobilepay-android` and `mobilepay-ios`
+are artifacts of the same flow, so a trail is compliant only once both have been attested. Two
+path-filtered per-platform workflows would leave trails permanently missing an artifact. Hence
+one workflow with a platform matrix, and `begin trail` in its own job so the legs cannot race
+creating the trail.
+
+**`mobile-sast`'s severity rule reads the effective SARIF level, not `.level`.** A result's
+`level` is optional; when absent the level comes from the rule's `defaultConfiguration`, then
+the spec default of `warning`. mobsfscan omits it often, so `.level == "error"` alone silently
+ignores those findings. The rule in `scripts/bootstrap_kosli.sh` walks the fallback chain.
+
+**`mobilepay` is gated by `kosli assert artifact` with no `--policy`.** The `publish-gate`
+policy spells out the orders-api controls (`peer-review`, `unit-tests`, …), so applying it to a
+mobile artifact would demand attestations that component never makes. Flow-template compliance
+is the gate there. A shared policy would mean either a mobile-specific policy or dropping
+`attestations:` from `publish-gate` in favour of `trail-compliance` alone.
+
+**`mobile-sast` has jq rules but no JSON Schema**, unlike the three orders-api types. Nothing
+principled — SARIF's schema is large and the jq rules already pin `version` and the tool name.
+
+**The Makefile owns building/scanning; the workflows own everything that talks to Kosli.**
+So `make scan` and `make package` need no API token and run locally in Docker, and the gate
+only ever runs in Actions. Keep that line: it is why the mobile half needs no toolchain
+installed.
+
 ## Gotchas
 
 - **The Kosli CLI only reads the token from an env var literally named `KOSLI_API_TOKEN`**
@@ -104,6 +144,18 @@ switching to it later means changing the flow template and policy from
   workflow. `git update-index --chmod=+x` fixes it.
 - Attestation types and policies are **org-level** objects in `kosli-public`, created by the
   `Bootstrap Kosli` workflow. They are not scoped to this repo.
+- **Neither mobile app compiles, and nothing checks that they do.** No Gradle build, no Xcode
+  project; `androidx.appcompat` is an unresolved import. mobsfscan is pattern-based and does
+  not care. The artifacts are zips of the source, so the fingerprint-and-gate half is real.
+- **`minSdkVersion=30` and `<uses-sdk>` in the Android manifest are scanner-driven**, not app
+  requirements — mobsfscan raises error-level findings without them. Same for the empty
+  `NSAppTransportSecurity` dict: ATS defaults are secure, `NSAllowsArbitraryLoads` is what
+  trips the scanner.
+- **The mobile gate has no failing case.** Both platforms scan clean, so it always passes.
+  Showing it block needs a commit that introduces a weakness.
+- **Nothing validates the jq rules automatically.** All three `mobile-sast` rules were run
+  with `jq` against real `make scan` output at merge time and returned `true`; there is no
+  check that keeps them honest, so a later edit's breakage is first seen in a workflow run.
 
 ## Setup
 
@@ -115,12 +167,13 @@ set vars `AZURE_WEBAPP_NAME` and `AZURE_RESOURCE_GROUP`. Optional vars `MUTATION
 `SONAR_RESULT`, `KOSLI_DRY_RUN`, `REPORT_AZURE_ENV` tune the demo without code changes —
 `MUTATION_THRESHOLD=70` gives a clean run with no waiver needed.
 
-## Still to build (points 2-4 of the customer scenario)
+## Still to build (points 3-4 of the customer scenario)
 
-- **Point 2** — mobile component: a second flow with an Oversecured report imported as a
-  custom attestation type. Same pattern as the Sonar import here.
-- **Point 3** — integration tests: a third flow whose trail references both artifacts by
-  fingerprint, attesting the combined run as `junit` and failing on purpose.
+- **Real mobile builds** — `make apk` in a container replacing the Android zip, then
+  `make ipa` on a macOS runner. Xcode cannot be containerised, so unlike `scan` and `apk` it
+  will not run on Linux.
+- **Point 3** — integration tests: a third flow whose trail references the Java and mobile
+  artifacts by fingerprint, attesting the combined run as `junit` and failing on purpose.
 - **Point 4** — deployment gate: `kosli/policies/prod-deploy-gate.yml` exists but is not
   attached. Enable `REPORT_AZURE_ENV`, run the bootstrap with *create environment* checked,
   and the policy starts judging what is actually running in App Service. Note `kosli snapshot

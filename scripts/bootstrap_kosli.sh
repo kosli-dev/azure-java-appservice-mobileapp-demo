@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # One-time (idempotent) setup of the org-level Kosli objects this demo needs:
-#   * three custom attestation types, each carrying the jq rules that DECIDE compliance
+#   * four custom attestation types, each carrying the jq rules that DECIDE compliance
 #   * the publish-gate policy that `kosli assert artifact` enforces in CI
 #
 # Re-running it creates a new version of anything whose content changed, so it is safe to
@@ -52,6 +52,18 @@ kosli create attestation-type mutation-testing \
   --summary "Killed=.killed" \
   --summary "Survived=.survived" \
   --summary "Not covered=.no_coverage"
+
+echo "==> mobile-sast attestation type"
+# A SARIF result's `level` is optional; when absent the effective level is the rule's
+# defaultConfiguration, then the spec default of "warning". mobsfscan omits it often, so
+# testing `.level == "error"` alone silently ignores those findings.
+# shellcheck disable=SC2016  # $rules is jq's, not the shell's; it must not expand.
+NO_ERROR_FINDINGS='[.runs[] | .tool.driver.rules as $rules | .results[] | (.level // $rules[.ruleIndex].defaultConfiguration.level // "warning")] | any(. == "error") | not'
+kosli create attestation-type mobile-sast \
+  --description "Mobile SAST scan in SARIF 2.1.0 format. Compliant when the scan reports no error-level findings." \
+  --jq "${NO_ERROR_FINDINGS}" \
+  --jq '.version == "2.1.0"' \
+  --jq '.runs[0].tool.driver.name == "mobsfscan"'
 
 echo "==> publish-gate policy"
 kosli create policy publish-gate kosli/policies/publish-gate.yml \

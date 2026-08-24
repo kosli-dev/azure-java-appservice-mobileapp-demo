@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://docs.kosli.com/schemas/flow-template/v1.json
+version: 1
+trail:
+  artifacts:
+  # One artifact per platform in one flow, so a trail is compliant only once
+  # both platforms have been attested to it.
+  # The requirement is per-artifact, not per-trail: the scan describes the app.
+  - name: mobilepay-android
+    attestations:
+    - name: mobile-sast
+      type: custom:mobile-sast
+  - name: mobilepay-ios
+    attestations:
+    - name: mobile-sast
+      type: custom:mobile-sast

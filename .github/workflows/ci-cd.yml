@@ -62,12 +62,13 @@ jobs:
           version: "2"
 
       # ---------------------------------------------------------------- Kosli flow + trail
-      # The flow template is version-controlled with the code (kosli/flow-template.yml), so
-      # the component's definition of "done" changes through pull requests like anything else.
+      # The flow template is version-controlled with the code
+      # (kosli/flow-templates/orders-api-ci.yml), so the component's definition of "done"
+      # changes through pull requests like anything else.
       - name: Create or update the Kosli flow
         run: |
           kosli create flow "$KOSLI_FLOW" \
-            --template-file kosli/flow-template.yml \
+            --template-file kosli/flow-templates/orders-api-ci.yml \
             --description "orders-api - Java backend on Azure App Service"
 
       - name: Begin the Kosli trail for this commit
