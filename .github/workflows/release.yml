@@ -96,6 +96,25 @@ jobs:
               --name "mobileorders-${platform}"
           done
 
+      # The release re-scans the source it just packaged rather than trusting the component
+      # pipeline's scan, so the SARIF is bound to the fingerprints that actually ship.
+      # mobsfscan runs in Docker, which ubuntu-latest has.
+      - name: Scan the mobile apps
+        run: |
+          make scan PLATFORM=android
+          make scan PLATFORM=ios
+
+      - name: Attest the mobile scans
+        run: |
+          for platform in android ios; do
+            kosli attest custom "build/mobileorders-${platform}.zip" \
+              --artifact-type file \
+              --name mobile-sast \
+              --type mobile-sast \
+              --attestation-data "build/mobsfscan-${platform}.sarif" \
+              --attachments "build/mobsfscan-${platform}.sarif"
+          done
+
       - name: Upload the deployable
         uses: actions/upload-artifact@v7
         with:

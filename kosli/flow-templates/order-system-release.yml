@@ -3,8 +3,9 @@
 # Kosli flow template for a release of the whole order system.
 #
 # A release trail is named after the git tag (v0.0.1), and is compliant only once all three
-# components have been attested to it, the integration test run across them has been reported
-# and judged compliant, and a named human has approved the release.
+# components have been attested to it, both mobile apps have been scanned clean, the
+# integration test run across them has been reported and judged compliant, and a named human
+# has approved the release.
 #
 # Both trail-level attestations are about the release rather than any one binary: the
 # integration test exercises the combination of the components, and the approval is a
@@ -26,5 +27,14 @@ trail:
     # Rebuilt from the tagged commit by the release workflow. Each component was already
     # gated in its own flow; here they are the contents of the release.
     - name: orders-api
+    # The mobile apps are re-scanned as part of the release, so the SARIF is bound to the
+    # zip that ships rather than to the one the component pipeline built. The requirement is
+    # per-artifact, not per-trail: the scan describes one app.
     - name: mobileorders-android
+      attestations:
+        - name: mobile-sast
+          type: custom:mobile-sast
     - name: mobileorders-ios
+      attestations:
+        - name: mobile-sast
+          type: custom:mobile-sast
