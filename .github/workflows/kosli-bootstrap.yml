@@ -13,7 +13,7 @@ on:
       create_environment:
         description: "Also create the Azure environment and attach the deploy-gate policy"
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
