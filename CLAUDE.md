@@ -5,7 +5,7 @@ file is the reasoning behind it, plus what is and is not verified.
 
 ## What this is
 
-A Kosli demo built for a customer evaluation. It covers **points 1 and 2** of their scenario:
+A Kosli demo built for a customer evaluation. It covers **points 1, 2 and 3** of their scenario:
 
 - **Point 1** — a Java component deployed to Azure App Service whose peer review, SonarQube
   quality gate, unit tests and mutation testing are all attested to Kosli, and whose right to
@@ -13,13 +13,18 @@ A Kosli demo built for a customer evaluation. It covers **points 1 and 2** of th
 - **Point 2** — the Mobile Orders mobile component (Android + iOS), scanned from source with
   mobsfscan, the SARIF report attested as a custom type whose jq rules are the gate. Merged in
   from the `mobile-app-example` repo; it was developed there and its git history lives there.
+- **Point 3** — a release process. A `v*` tag builds both components as one release, an
+  integration test run is reported to the release trail by a separate manual workflow
+  (pass or fail, from canned JSON), and a protected GitHub environment halts the release
+  until someone approves — after which Kosli, not the approver, decides.
 
-Kosli org: `kosli-public` for both.
+Kosli org: `kosli-public` for all three.
 
 | Component | Flow | Artifacts | Template |
 | --- | --- | --- | --- |
 | Java backend | `orders-api-ci` | `orders-api` | `kosli/flow-templates/orders-api-ci.yml` |
 | Mobile app | `mobileorders` | `mobileorders-android`, `mobileorders-ios` | `kosli/flow-templates/mobileorders.yml` |
+| Release | `order-system-release` | all three of the above, rebuilt from the tag | `kosli/flow-templates/order-system-release.yml` |
 
 ## State
 
@@ -42,6 +47,13 @@ the flow, type and gate ran green in Actions. What the merge itself changed — 
 paths, the folded-in `mobile-sast` bootstrap, the `create flow` step moving into
 `mobileorders.yml`, the CLI pin — has not been run.
 
+For the release half (point 3), verified locally: the new flow template and
+`kosli/policies/release-gate.yml` validate against the published schemas; every new Kosli
+command dry-runs clean on **v2.38.0** (including `bootstrap_kosli.sh` end to end);
+`make package` produces both mobile zips; the three `integration-test` jq rules were run with
+`jq` against both canned reports and return the expected verdicts (pass: all true, fail:
+`.failed == 0` and `.errors == 0` false). Nothing about it has run in Actions.
+
 Not verified, and the first live run is the test of it:
 
 - Whether the `artifacts.attestations[].name` entries in `publish-gate.yml` match on the
@@ -54,6 +66,15 @@ Not verified, and the first live run is the test of it:
 - Whether the custom attestation type names collide with existing types in `kosli-public`.
   Run `kosli list attestation-types` before the first bootstrap — re-running it would version
   an existing type rather than create a new one.
+- Whether `kosli assert artifact --policy release-gate` really fails when the *trail-level*
+  `integration-tests` attestation is missing or non-compliant. The policy leans entirely on
+  `trail-compliance: required: true` for that (see the decision below), so if artifact
+  compliance turns out not to include trail compliance, the gate passes when it should not —
+  which is the one failure mode that would be invisible in the demo. Check the first blocked
+  release actually blocks.
+- Whether the release trail's artifact fingerprints match the ones from the component
+  pipelines. They are rebuilds, so they may well differ; nothing depends on them matching,
+  and the README says so.
 - `actions/upload-artifact@v7` + `actions/download-artifact@v7`. Matched majors on purpose;
   upload's latest is v7 while download's is v8, so v7/v7 is the coherent pair.
 
@@ -122,6 +143,28 @@ is the gate there. A shared policy would mean either a mobile-specific policy or
 **`mobile-sast` has jq rules but no JSON Schema**, unlike the three orders-api types. Nothing
 principled — SARIF's schema is large and the jq rules already pin `version` and the tool name.
 
+**The release gate runs after the approval, not before it.** The `release-gate` job sits on
+the protected `production-release` environment, so approving it only lets the job *start*;
+the job then runs `kosli assert artifact --policy release-gate`. That ordering is the whole
+point of point 3 — a human can start the gate, a human cannot talk it into passing. Putting
+the assert in the build job instead would make the approval the decision.
+
+**`integration-tests` is a trail-level attestation.** It is about the combination of the
+components, not any one binary, so it hangs off the trail. That is also why `release-gate.yml`
+has no `attestations:` list, unlike `publish-gate.yml`: that list matches attestations on the
+*artifact*, and this one is not on an artifact. `trail-compliance: required: true` plus the
+flow template is what carries the control set. Do not "fix" the asymmetry by copying the list
+across.
+
+**The release rebuilds all three artifacts rather than referencing the CI fingerprints.**
+Looking them up would mean `kosli list artifacts` plus JSON wrangling for three components,
+and the release trail would have no provenance of its own. Rebuilding costs one `mvn verify`
+and two `zip`s. The cost is that the fingerprints are not guaranteed to equal the CI ones.
+
+**The integration test workflow always succeeds, whichever variant you pick.** Same rule as
+everywhere else here: scripts report facts, Kosli decides. `fail` is the default input so the
+demo's first pass through the gate shows it blocking.
+
 **The Makefile owns building/scanning; the workflows own everything that talks to Kosli.**
 So `make scan` and `make package` need no API token and run locally in Docker, and the gate
 only ever runs in Actions. Keep that line: it is why the mobile half needs no toolchain
@@ -145,6 +188,15 @@ installed.
   workflow. `git update-index --chmod=+x` fixes it.
 - Attestation types and policies are **org-level** objects in `kosli-public`, created by the
   `Bootstrap Kosli` workflow. They are not scoped to this repo.
+- **The `production-release` environment needs required reviewers set in the GitHub UI.**
+  Nothing in the repo can do that. Without them the release workflow runs straight through
+  and there is no halt, which is the demo.
+- **`KOSLI_DRY_RUN=true` makes the release gate pass no matter what** — `kosli assert` exits 0
+  in dry-run mode. Same for the publish gate. Fine for rehearsing the pipeline, useless for
+  rehearsing the gate.
+- **The release trail is named after the tag**, not the SHA, because the manually-run
+  integration test workflow has to be able to address it. Re-tagging the same name is
+  therefore re-using a trail.
 - **Neither mobile app compiles, and nothing checks that they do.** No Gradle build, no Xcode
   project; `androidx.appcompat` is an unresolved import. mobsfscan is pattern-based and does
   not care. The artifacts are zips of the source, so the fingerprint-and-gate half is real.
@@ -162,19 +214,22 @@ installed.
 
 Secret `KOSLI_PUBLIC_API_TOKEN` (the workflows map it onto `KOSLI_API_TOKEN` in the job env,
 since that's the only env var name the Kosli CLI itself recognizes for `--api-token`); then
-run the **Bootstrap Kosli** workflow. Azure:
+run the **Bootstrap Kosli** workflow (re-run it after this change: it now also creates the
+`integration-test` type and the `release-gate` policy). Add required reviewers to the
+`production-release` GitHub environment, or the release never halts. Azure:
 `infra/deploy.sh` then `infra/setup-github-oidc.sh`, which prints the three `AZURE_*` secrets;
 set vars `AZURE_WEBAPP_NAME` and `AZURE_RESOURCE_GROUP`. Optional vars `MUTATION_THRESHOLD`,
 `SONAR_RESULT`, `KOSLI_DRY_RUN`, `REPORT_AZURE_ENV` tune the demo without code changes —
 `MUTATION_THRESHOLD=70` gives a clean run with no waiver needed.
 
-## Still to build (points 3-4 of the customer scenario)
+## Still to build (point 4 of the customer scenario)
 
 - **Real mobile builds** — `make apk` in a container replacing the Android zip, then
   `make ipa` on a macOS runner. Xcode cannot be containerised, so unlike `scan` and `apk` it
   will not run on Linux.
-- **Point 3** — integration tests: a third flow whose trail references the Java and mobile
-  artifacts by fingerprint, attesting the combined run as `junit` and failing on purpose.
+- **A real integration suite** — the release reports one of two canned runs under
+  `integration-tests/`. A suite that actually drives the deployed backend from the mobile
+  clients replaces one workflow step; the type, the template and the gate stay as they are.
 - **Point 4** — deployment gate: `kosli/policies/prod-deploy-gate.yml` exists but is not
   attached. Enable `REPORT_AZURE_ENV`, run the bootstrap with *create environment* checked,
   and the policy starts judging what is actually running in App Service. Note `kosli snapshot

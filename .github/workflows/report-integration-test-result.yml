@@ -1,0 +1,83 @@
+name: Report integration test result
+
+# Step 2 of the release process: report the integration test run for a release to Kosli.
+#
+# There is no real integration suite in this demo, so the run is one of two canned reports
+# under integration-tests/. Which one you pick does not decide anything here - the workflow
+# always succeeds. It uploads facts; the jq rules on the `integration-test` attestation type
+# decide, server side, whether the run counts as a pass. That verdict is what the release
+# gate reads.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag the run belongs to (the trail name, e.g. v0.0.1)"
+        type: string
+        required: true
+      result:
+        description: "Which integration test report to send"
+        type: choice
+        options: [pass, fail]
+        default: fail
+
+permissions:
+  contents: read
+
+env:
+  KOSLI_ORG: kosli-public
+  KOSLI_FLOW: order-system-release
+  KOSLI_TRAIL: ${{ inputs.tag }}
+  KOSLI_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}
+  KOSLI_DRY_RUN: ${{ vars.KOSLI_DRY_RUN }}
+
+jobs:
+  report:
+    name: Report the run to Kosli
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Kosli CLI
+        uses: kosli-dev/setup-cli-action@v5
+        with:
+          version: "2"
+
+      # Stamp the canned report with this release and this run, so the attestation points
+      # back at where it came from.
+      - name: Prepare the report
+        env:
+          VARIANT: ${{ inputs.result }}
+        run: |
+          jq \
+            --arg release "$KOSLI_TRAIL" \
+            --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '.release = $release | .report_url = $url' \
+            "integration-tests/result-${VARIANT}.json" > integration-test.json
+          jq . integration-test.json
+
+      - name: Attest the run
+        run: |
+          kosli attest custom \
+            --name integration-tests \
+            --type integration-test \
+            --attestation-data integration-test.json \
+            --attachments integration-test.json
+
+      - name: Summary
+        env:
+          VARIANT: ${{ inputs.result }}
+        run: |
+          {
+            echo "### Integration test run reported"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Release | \`$KOSLI_TRAIL\` |"
+            echo "| Report | \`integration-tests/result-${VARIANT}.json\` |"
+            echo "| Trail | [\`$KOSLI_TRAIL\`](https://app.kosli.com/$KOSLI_ORG/flows/$KOSLI_FLOW/trails/$KOSLI_TRAIL) |"
+            echo ""
+            echo "Kosli evaluated the report against the rules on the \`integration-test\`"
+            echo "attestation type. Approve the **release-gate** job on the Release workflow"
+            echo "for \`$KOSLI_TRAIL\` to see what it decided."
+          } >> "$GITHUB_STEP_SUMMARY"

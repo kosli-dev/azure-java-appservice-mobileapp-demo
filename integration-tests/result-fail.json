@@ -1,0 +1,42 @@
+{
+  "tool": "order-system-integration-suite",
+  "suite": "order-system end-to-end",
+  "release": "REPLACED_BY_CI",
+  "components": ["orders-api", "mobileorders-android", "mobileorders-ios"],
+  "total": 12,
+  "passed": 9,
+  "failed": 2,
+  "errors": 1,
+  "skipped": 0,
+  "duration_seconds": 91.7,
+  "report_url": "REPLACED_BY_CI",
+  "cases": [
+    { "name": "health endpoint answers", "status": "passed", "duration_seconds": 0.9 },
+    { "name": "place order returns an order id", "status": "passed", "duration_seconds": 3.0 },
+    { "name": "place order persists the order", "status": "passed", "duration_seconds": 2.9 },
+    { "name": "list orders returns the placed order", "status": "passed", "duration_seconds": 2.3 },
+    {
+      "name": "cancel order releases the reservation",
+      "status": "failed",
+      "duration_seconds": 4.4,
+      "message": "expected reservation count 0 but was 1 - the reservation outlives the cancelled order"
+    },
+    { "name": "order total includes tax", "status": "passed", "duration_seconds": 1.5 },
+    { "name": "android client places an order", "status": "passed", "duration_seconds": 11.9 },
+    { "name": "android client reads back the order history", "status": "passed", "duration_seconds": 9.1 },
+    {
+      "name": "android client survives an offline retry",
+      "status": "failed",
+      "duration_seconds": 13.4,
+      "message": "duplicate order created on retry - the request is not idempotent"
+    },
+    { "name": "ios client places an order", "status": "passed", "duration_seconds": 11.2 },
+    { "name": "ios client reads back the order history", "status": "passed", "duration_seconds": 8.8 },
+    {
+      "name": "ios client rejects an untrusted certificate",
+      "status": "error",
+      "duration_seconds": 22.3,
+      "message": "harness error: simulator did not attach to the proxy within 20s"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "tool": "order-system-integration-suite",
+  "suite": "order-system end-to-end",
+  "release": "REPLACED_BY_CI",
+  "components": ["orders-api", "mobileorders-android", "mobileorders-ios"],
+  "total": 12,
+  "passed": 12,
+  "failed": 0,
+  "errors": 0,
+  "skipped": 0,
+  "duration_seconds": 84.2,
+  "report_url": "REPLACED_BY_CI",
+  "cases": [
+    { "name": "health endpoint answers", "status": "passed", "duration_seconds": 0.9 },
+    { "name": "place order returns an order id", "status": "passed", "duration_seconds": 3.1 },
+    { "name": "place order persists the order", "status": "passed", "duration_seconds": 2.8 },
+    { "name": "list orders returns the placed order", "status": "passed", "duration_seconds": 2.2 },
+    { "name": "cancel order releases the reservation", "status": "passed", "duration_seconds": 4.0 },
+    { "name": "order total includes tax", "status": "passed", "duration_seconds": 1.4 },
+    { "name": "android client places an order", "status": "passed", "duration_seconds": 11.7 },
+    { "name": "android client reads back the order history", "status": "passed", "duration_seconds": 9.3 },
+    { "name": "android client survives an offline retry", "status": "passed", "duration_seconds": 12.8 },
+    { "name": "ios client places an order", "status": "passed", "duration_seconds": 10.9 },
+    { "name": "ios client reads back the order history", "status": "passed", "duration_seconds": 8.6 },
+    { "name": "ios client rejects an untrusted certificate", "status": "passed", "duration_seconds": 16.5 }
+  ]
+}

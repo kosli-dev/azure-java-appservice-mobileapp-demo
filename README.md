@@ -9,7 +9,14 @@ a Kosli policy** — not by a green pipeline.
 | `orders-api` | a Spring Boot service, built and deployed to Azure App Service | `orders-api-ci` |
 | `mobileorders` | the Mobile Orders app, Android and iOS, scanned from source | `mobileorders` |
 
-Between them they cover points 1 and 2 of the customer's demo scenario.
+Both are then released together, as one order system, through a release process where a
+human can start the gate but only Kosli can open it.
+
+| Process | What it is | Flow |
+| --- | --- | --- |
+| Release | a tag builds the release, an integration test run is reported to it, and a policy decides whether it goes out | `order-system-release` |
+
+Between them they cover points 1, 2 and 3 of the customer's demo scenario.
 
 ## Point 1 — orders-api (Java on Azure App Service)
 
@@ -28,13 +35,16 @@ infrastructure defined as Bicep in [`infra/`](infra).
 ```
 kosli/flow-templates/orders-api-ci.yml  orders-api's definition of "done"
 kosli/flow-templates/mobileorders.yml   the mobile app's definition of "done"
+kosli/flow-templates/order-system-release.yml  a release's definition of "done"
 kosli/attestation-types/*.json     JSON Schemas for the custom attestation types
 kosli/policies/publish-gate.yml    "may this component be published?"
+kosli/policies/release-gate.yml    "may this release go out?"
 kosli/policies/prod-deploy-gate.yml  groundwork for the deployment gate (point 4)
 
 src/                               Spring Boot service (a pricing endpoint)
 pom.xml                            Java 21, JUnit 5, JaCoCo, PIT mutation testing
 sonar/quality-gate-{pass,fail}.json  SonarQube quality-gate reports to import
+integration-tests/result-{pass,fail}.json  integration test runs to report to a release
 infra/main.bicep                   Linux App Service plan + Java SE web app
 
 mobileorders/{android,ios}/        the mobile app source, scanned by mobsfscan
@@ -48,6 +58,8 @@ scripts/waive_attestation.sh       records a waiver (override) with a reason
 
 .github/workflows/ci-cd.yml        orders-api: build → attest → publish gate → deploy
 .github/workflows/mobileorders.yml  mobileorders: package → scan → attest → publish gate
+.github/workflows/release.yml      a tag: build the release → wait for approval → release gate
+.github/workflows/report-integration-test-result.yml  report a run to a release trail
 .github/workflows/pr.yml           fast checks on the pull request
 .github/workflows/kosli-bootstrap.yml   run the bootstrap script from the Actions tab
 .github/workflows/waive-attestation.yml waive a blocked control from the Actions tab
@@ -65,6 +77,7 @@ Nothing in this repo decides pass or fail. The scripts collect facts; Kosli eval
 | `mutation-tests` | `.total_mutations > 0` and `.mutation_score >= .threshold` |
 | `unit-tests` | built-in `junit` attestation type |
 | `mobile-sast` | no `error`-level SARIF finding, and the report really is SARIF 2.1.0 from mobsfscan — see [the rule](#the-compliance-rule) |
+| `integration-tests` | `.total > 0`, `.failed == 0` and `.errors == 0` — a run that fell over is not a pass either |
 
 Those rules live on the attestation types (see `scripts/bootstrap_kosli.sh`), so they apply
 to every component that uses the type — change the rule once, every pipeline is judged by
@@ -84,7 +97,8 @@ Repository secret:
 Then run the **Bootstrap Kosli** workflow from the Actions tab (or `./scripts/bootstrap_kosli.sh`
 locally with `KOSLI_ORG` and `KOSLI_API_TOKEN` set — the Kosli CLI only recognizes the token
 from an env var named `KOSLI_API_TOKEN`, so the workflows map the `KOSLI_PUBLIC_API_TOKEN`
-secret onto it). It creates the four custom attestation types and the `publish-gate` policy.
+secret onto it). It creates the five custom attestation types and the `publish-gate` and `release-gate`
+policies.
 
 > The attestation types are org-level objects. If `kosli-public` already has a type with one
 > of these names, run `kosli list attestation-types` first — re-running the bootstrap would
@@ -122,8 +136,11 @@ Optional variables that tune the demo without editing code:
 | `KOSLI_DRY_RUN` | unset | Set to `true` to run the pipeline without sending anything to Kosli. |
 | `REPORT_AZURE_ENV` | unset | Set to `true` to enable the scheduled Azure environment reporting. |
 
-A GitHub environment named `production` gates the deploy job, and one named `waivers` gates
-the waiver workflow — add required reviewers to either if you want to show four-eyes approval.
+GitHub environments gate three jobs: `production` the deploy job, `waivers` the waiver
+workflow, and `production-release` the release gate. **Add required reviewers to
+`production-release`** — without them the release workflow runs straight through and there is
+nothing to halt, which is the whole shape of the release demo. Add them to the other two as
+well if you want to show four-eyes approval there.
 
 ## Running the orders-api demo
 
@@ -280,6 +297,56 @@ here.
   `NSAllowsArbitraryLoads` is what would trip the scanner.
 - `com.kosli.mobileorders` becomes the Play Store application id if this is ever built for real.
 
+## Point 3 — the release process
+
+Both components are released together as the order system. A release is a Kosli trail named
+after the git tag, in the `order-system-release` flow, and it is compliant only once all
+three artifacts have been attested to it **and** an integration test run across them has been
+reported and judged clean.
+
+| Step | What you do | What happens |
+| --- | --- | --- |
+| 1 | `git tag v0.0.1 && git push origin v0.0.1` | The **Release** workflow rebuilds the backend and both mobile packages from the tagged commit, attests all three to the release trail, and stops at the `release-gate` job, which is waiting on the protected `production-release` environment. |
+| 2 | Run **Report integration test result** with tag `v0.0.1` and result `pass` or `fail` | One of the two canned runs under `integration-tests/` is attested to the trail as `integration-tests`. The workflow always succeeds — it reports facts. Kosli evaluates them. |
+| 3 | Approve `release-gate` in *Review deployments* | The job runs `kosli assert artifact --policy release-gate`. If the run was never reported, or was reported as failing, the gate fails and no release is published. |
+
+The point of step 3 is that pressing continue is **not** the decision. The approval only lets
+the job start; what the job does is ask Kosli. So the demo has two distinct failure modes to
+show:
+
+```bash
+# approve without reporting anything -> blocked: the trail is missing integration-tests
+# report `fail`, then approve       -> blocked: .failed == 0 and .errors == 0 are false
+# report `pass`, then approve       -> the gate passes and the GitHub release is published
+```
+
+Reporting again adds another attestation to the trail rather than replacing it, and Kosli
+judges the latest — so after a blocked release you re-report as `pass` and re-run the
+`release-gate` job, with both reports left on the trail as evidence.
+
+### What the release contains
+
+```
+orders-api            deploy/app.jar, fingerprinted as a directory
+mobileorders-android  build/mobileorders-android.zip
+mobileorders-ios      build/mobileorders-ios.zip
+```
+
+Each is rebuilt from the tagged commit rather than pulled from the CI runs, so the release
+trail has provenance of its own for everything it contains. That also means the fingerprints
+are those of the release build; they are not guaranteed to equal the ones from the component
+pipelines.
+
+### Where the release control lives
+
+`integration-tests` is attested at **trail** level, not on an artifact: it is about the
+combination of the components, not any one binary. That is also why
+[`kosli/policies/release-gate.yml`](kosli/policies/release-gate.yml) carries no `attestations:`
+list the way `publish-gate` does — that list matches attestations on the artifact. The release
+gate leans on `trail-compliance: required: true` instead, and the flow template
+[`order-system-release.yml`](kosli/flow-templates/order-system-release.yml) is what spells out
+the control set.
+
 ## Deliberate simplifications
 
 **The SonarQube report is canned.** The reports under `sonar/` have the shape of SonarQube's
@@ -316,8 +383,9 @@ command is currently a beta feature, which is why this demo enforces the gate wi
 - **Mobile builds:** `make apk` — a real Android build in a container, so the APK replaces
   the zip; then `make ipa` on a macOS runner, since Xcode cannot be containerised and so,
   unlike `scan` and `apk`, it will not run on Linux.
-- **Point 3 (integration tests):** a third flow whose trail references both artifacts by
-  fingerprint, attesting the combined integration test run as `junit`.
+- **A real integration suite:** the release reports one of two canned runs. Replacing them
+  with a suite that actually drives the deployed backend from the mobile clients is a change
+  to one workflow step — the attestation type, the flow template and the gate stay as they are.
 - **Point 4 (deployment gate):** enable `REPORT_AZURE_ENV`, run the Bootstrap workflow with
   *create environment* checked, and the `prod-deploy-gate` policy starts judging whatever is
   actually running in App Service — including anything that never went through the pipeline.
