@@ -160,9 +160,14 @@ one — `custom:sonarqube-quality-gate` (and its schema, its bootstrap block, an
 
 **Both mobile apps are artifacts of the system flow, not of a flow of their own.** A trail is
 compliant only once both have been packaged, scanned and found clean, so a commit cannot be
-released with one platform missing. They are built and scanned in the same job as the backend,
-which is also why there is no matrix and no separate `begin trail` job any more: nothing can
-race a single sequential job.
+released with one platform missing.
+
+**The build is three parallel jobs behind a `trail` job.** `backend` and the two `mobile`
+matrix legs all attest to the same trail, so the trail has to exist before any of them starts
+— that is the whole job of `trail`, and it is why the legs cannot race creating it.
+`release-gate` needs `mobile` as well as `backend`: it asserts trail compliance, which
+includes both `mobile-sast` attestations, so without that edge it could run while a leg is
+still scanning. `publish-gate` needs only `backend`, since it judges the backend's controls.
 
 **`mobile-sast`'s severity rule reads the effective SARIF level, not `.level`.** A result's
 `level` is optional; when absent the level comes from the rule's `defaultConfiguration`, then

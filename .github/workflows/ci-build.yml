@@ -3,7 +3,9 @@ name: CI build
 # The pipeline for the whole order system: the Java backend and both mobile apps, built,
 # controlled and released together from one commit on main.
 #
-#   build-and-attest  build, scan and attest every control to Kosli
+#   trail             create the flow and the trail for this commit
+#   backend           build, test and attest the Java service        \ in parallel
+#   mobile            package, scan and attest each mobile app       /
 #   publish-gate      may this component be published?
 #   release-gate      waits for approval, then asks Kosli whether the release may go out
 #   deploy            put the approved build on Azure App Service
@@ -41,11 +43,63 @@ env:
   MUTATION_THRESHOLD: ${{ github.event.inputs.mutation_threshold || vars.MUTATION_THRESHOLD || '85' }}
 
 jobs:
-  build-and-attest:
-    name: Build and attest
+  # The trail has to exist before anything attests to it, and this is the only job that
+  # creates it, so the build jobs below cannot race each other creating the same trail.
+  trail:
+    name: Begin the trail
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Kosli CLI
+        uses: kosli-dev/setup-cli-action@v5
+        with:
+          version: "2"
+
+      # The flow template is version-controlled with the code
+      # (kosli/flow-templates/order-system-ci.yml), so the system's definition of "done"
+      # changes through pull requests like anything else.
+      - name: Create or update the Kosli flow
+        run: |
+          kosli create flow "$KOSLI_FLOW" \
+            --template-file kosli/flow-templates/order-system-ci.yml \
+            --description "The order system: Java backend on Azure App Service, plus the Mobile Orders apps"
+
+      - name: Begin the Kosli trail for this commit
+        run: |
+          kosli begin trail "$KOSLI_TRAIL" \
+            --description "$(git log -1 --pretty=%s)"
+
+      - name: Attest the pull request
+        run: |
+          kosli attest pullrequest github \
+            --name pull-request \
+            --github-token "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: What happens next
+        run: |
+          {
+            echo "### Next"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Trail | [\`$KOSLI_TRAIL\`](https://app.kosli.com/$KOSLI_ORG/flows/$KOSLI_FLOW/trails/$KOSLI_TRAIL) |"
+            echo ""
+            echo "The trail is not compliant yet: nothing has reported an integration test run."
+            echo ""
+            echo "1. Run the **Report integration test result** workflow with commit"
+            echo "   \`$KOSLI_TRAIL\`, choosing \`pass\` or \`fail\`."
+            echo "2. Approve **release-gate** below. Kosli decides from there."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  backend:
+    name: Build and attest the backend
+    runs-on: ubuntu-latest
+    needs: trail
     outputs:
-      fingerprint: ${{ steps.artifact.outputs.fingerprint }}
+      orders-api-fingerprint: ${{ steps.artifact.outputs.orders-api-fingerprint }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -62,28 +116,6 @@ jobs:
         with:
           version: "2"
 
-      # ---------------------------------------------------------------- Kosli flow + trail
-      # The flow template is version-controlled with the code
-      # (kosli/flow-templates/order-system-ci.yml), so the system's definition of "done"
-      # changes through pull requests like anything else.
-      - name: Create or update the Kosli flow
-        run: |
-          kosli create flow "$KOSLI_FLOW" \
-            --template-file kosli/flow-templates/order-system-ci.yml \
-            --description "The order system: Java backend on Azure App Service, plus the Mobile Orders apps"
-
-      - name: Begin the Kosli trail for this commit
-        run: |
-          kosli begin trail "$KOSLI_TRAIL" \
-            --description "$(git log -1 --pretty=%s)"
-
-      # -------------------------------------------------------------------- 1. Peer review
-      - name: Attest the pull request
-        run: |
-          kosli attest pullrequest github \
-            --name pull-request \
-            --github-token "${{ secrets.GITHUB_TOKEN }}"
-
       # ---------------------------------------------------------------- Build and unit test
       - name: Build and test
         run: mvn -B --no-transfer-progress verify
@@ -98,10 +130,10 @@ jobs:
       - name: Attest the backend
         id: artifact
         run: |
-          FINGERPRINT="$(kosli fingerprint deploy --artifact-type dir)"
-          echo "fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
-          # Every later attestation binds to this artifact via KOSLI_FINGERPRINT.
-          echo "KOSLI_FINGERPRINT=$FINGERPRINT" >> "$GITHUB_ENV"
+          ORDERS_API_FINGERPRINT="$(kosli fingerprint deploy --artifact-type dir)"
+          echo "orders-api-fingerprint=$ORDERS_API_FINGERPRINT" >> "$GITHUB_OUTPUT"
+          # Every later orders-api attestation binds to it via KOSLI_FINGERPRINT.
+          echo "KOSLI_FINGERPRINT=$ORDERS_API_FINGERPRINT" >> "$GITHUB_ENV"
           kosli attest artifact deploy \
             --artifact-type dir \
             --name "$ARTIFACT_NAME"
@@ -110,11 +142,11 @@ jobs:
             echo ""
             echo "| | |"
             echo "|---|---|"
-            echo "| Trail | [\`$KOSLI_TRAIL\`](https://app.kosli.com/$KOSLI_ORG/flows/$KOSLI_FLOW/trails/$KOSLI_TRAIL) |"
             echo "| Artifact | \`$ARTIFACT_NAME\` |"
-            echo "| Fingerprint | \`$FINGERPRINT\` |"
+            echo "| Fingerprint | \`$ORDERS_API_FINGERPRINT\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # -------------------------------------------------------------------- 1. Peer review
       - name: Attest the peer review evaluation
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -168,36 +200,6 @@ jobs:
             --attestation-data mutation-testing.json \
             --attachments target/pit-reports
 
-      # ------------------------------------------------------------------- 4. The mobile apps
-      - name: Build the mobile apps
-        run: |
-          make package PLATFORM=android
-          make package PLATFORM=ios
-
-      - name: Attest the mobile apps
-        run: |
-          for platform in android ios; do
-            kosli attest artifact "build/mobileorders-${platform}.zip" \
-              --artifact-type file \
-              --name "mobileorders-${platform}"
-          done
-
-      - name: Scan the mobile apps
-        run: |
-          make scan PLATFORM=android
-          make scan PLATFORM=ios
-
-      - name: Attest the mobile scans
-        run: |
-          for platform in android ios; do
-            kosli attest custom "build/mobileorders-${platform}.zip" \
-              --artifact-type file \
-              --name mobile-sast \
-              --type mobile-sast \
-              --attestation-data "build/mobsfscan-${platform}.sarif" \
-              --attachments "build/mobsfscan-${platform}.sarif"
-          done
-
       - name: Upload the deployable
         uses: actions/upload-artifact@v7
         with:
@@ -205,23 +207,53 @@ jobs:
           path: deploy/app.jar
           if-no-files-found: error
 
-      - name: What happens next
+  # ------------------------------------------------------------------- 4. The mobile apps
+  mobile:
+    name: Build, scan and attest ${{ matrix.platform }}
+    # ubuntu, not macos, for both legs: mobsfscan reads iOS source, so no Xcode is needed.
+    runs-on: ubuntu-latest
+    needs: trail
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [android, ios]
+    env:
+      ARTIFACT: build/mobileorders-${{ matrix.platform }}.zip
+      SARIF: build/mobsfscan-${{ matrix.platform }}.sarif
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Kosli CLI
+        uses: kosli-dev/setup-cli-action@v5
+        with:
+          version: "2"
+
+      - name: Build
+        run: make package PLATFORM=${{ matrix.platform }}
+
+      - name: Attest the app
         run: |
-          {
-            echo "### Next"
-            echo ""
-            echo "The trail is not compliant yet: nothing has reported an integration test run."
-            echo ""
-            echo "1. Run the **Report integration test result** workflow with commit"
-            echo "   \`$KOSLI_TRAIL\`, choosing \`pass\` or \`fail\`."
-            echo "2. Approve **release-gate** below. Kosli decides from there."
-          } >> "$GITHUB_STEP_SUMMARY"
+          kosli attest artifact "$ARTIFACT" \
+            --artifact-type file \
+            --name "mobileorders-${{ matrix.platform }}"
+
+      - name: Scan
+        run: make scan PLATFORM=${{ matrix.platform }}
+
+      - name: Attest the scan
+        run: |
+          kosli attest custom \
+            --fingerprint "$(kosli fingerprint "$ARTIFACT" --artifact-type file)" \
+            --name mobile-sast \
+            --type mobile-sast \
+            --attestation-data "$SARIF" \
+            --attachments "$SARIF"
 
   # ------------------------------------------------------------------------- 5. Publish gate
   publish-gate:
     name: May this component be published?
     runs-on: ubuntu-latest
-    needs: build-and-attest
+    needs: backend
     steps:
       - uses: actions/checkout@v5
 
@@ -236,7 +268,7 @@ jobs:
       - name: Assert the publish-gate policy
         run: |
           kosli assert artifact \
-            --fingerprint "${{ needs.build-and-attest.outputs.fingerprint }}" \
+            --fingerprint "${{ needs.backend.outputs.orders-api-fingerprint }}" \
             --policy publish-gate \
             --flow "$KOSLI_FLOW"
 
@@ -254,7 +286,7 @@ jobs:
 
             scripts/waive_attestation.sh \\
               --trail "${KOSLI_TRAIL}" \\
-              --fingerprint "${{ needs.build-and-attest.outputs.fingerprint }}" \\
+              --fingerprint "${{ needs.backend.outputs.orders-api-fingerprint }}" \\
               --reason "why this is acceptable, and what happens next"
 
           ...then re-run this job. The Sonar attestation arrives by webhook, so it can also
@@ -266,7 +298,7 @@ jobs:
   release-gate:
     name: May this release go out?
     runs-on: ubuntu-latest
-    needs: [build-and-attest, publish-gate]
+    needs: [backend, mobile, publish-gate]
     # Without required reviewers on this environment the job does not wait, and there is
     # no approval to attest below.
     environment: production-release
@@ -304,7 +336,7 @@ jobs:
       - name: Assert the release-gate policy
         run: |
           kosli assert artifact \
-            --fingerprint "${{ needs.build-and-attest.outputs.fingerprint }}" \
+            --fingerprint "${{ needs.backend.outputs.orders-api-fingerprint }}" \
             --policy release-gate \
             --flow "$KOSLI_FLOW"
 
@@ -335,7 +367,7 @@ jobs:
   deploy:
     name: Deploy to Azure App Service
     runs-on: ubuntu-latest
-    needs: [build-and-attest, release-gate]
+    needs: [backend, release-gate]
     permissions:
       contents: read
       id-token: write
@@ -386,7 +418,7 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| Commit | \`$KOSLI_TRAIL\` |"
-            echo "| Backend fingerprint | \`${{ needs.build-and-attest.outputs.fingerprint }}\` |"
+            echo "| Backend fingerprint | \`${{ needs.backend.outputs.orders-api-fingerprint }}\` |"
             echo "| URL | ${{ steps.deploy.outputs.webapp-url }} |"
             echo ""
             echo "The next Azure environment snapshot should show this fingerprint running."

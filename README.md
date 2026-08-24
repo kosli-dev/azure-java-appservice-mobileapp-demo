@@ -8,8 +8,13 @@ One pipeline, [`ci-build.yml`](.github/workflows/ci-build.yml), runs on every pu
 and carries the whole system to production:
 
 ```
-build and attest → publish gate → [integration test report] → approval → release gate → deploy
+                 ┌─ backend ──────────── publish gate ─┐
+begin the trail ─┼─ mobile (android) ──────────────────┼─ release gate ─ deploy
+                 └─ mobile (ios) ──────────────────────┘
 ```
+
+with the integration test report and the approval landing between the build and the release
+gate.
 
 Everything lands on one Kosli flow, `order-system-ci`, whose trail is the commit:
 
@@ -178,12 +183,12 @@ The merge triggers `CI build`. The `pull_request` and `peer-review` attestations
 that merge commit, so a real (approved) pull request is what makes the peer-review control
 pass.
 
-**2. Watch the build-and-attest job.**
-It creates/updates the flow from `kosli/flow-templates/order-system-ci.yml`, begins the trail
-for the commit, builds the JAR, fingerprints the deployable, and attests: pull request, peer
-review, unit tests, mutation testing — then packages and scans both mobile apps and attests
-those too. The PIT HTML report and the two SARIF reports go to the Kosli Evidence Vault as
-attachments. The SonarCloud scan runs as its own step and attests the quality gate to the
+**2. Watch the build jobs.**
+`trail` creates/updates the flow from `kosli/flow-templates/order-system-ci.yml`, begins the
+trail for the commit and attests the pull request. Three jobs then run in parallel against
+that trail: `backend` builds the JAR, fingerprints the deployable and attests peer review,
+unit tests and mutation testing, and the two `mobile` legs package, scan and attest their app.
+The PIT HTML report and the two SARIF reports go to the Kosli Evidence Vault as attachments. The SonarCloud scan runs as its own step and attests the quality gate to the
 same trail itself, over the webhook, once analysis completes — there is no `kosli attest`
 call for it, so it can land moments after the job finishes rather than during it.
 
@@ -333,7 +338,7 @@ and judged clean, and a named human has approved the release.
 
 | Step | What you do | What happens |
 | --- | --- | --- |
-| 1 | Merge an approved pull request | **CI build** builds and attests everything, clears the publish gate, and stops at the `release-gate` job, which is waiting on the protected `production-release` environment. |
+| 1 | Merge an approved pull request | **CI build** builds and attests everything — backend and both mobile apps in parallel — clears the publish gate, and stops at the `release-gate` job, which is waiting on the protected `production-release` environment. |
 | 2 | Run **Report integration test result** with the commit SHA and result `pass` or `fail` | One of the two canned runs under `integration-tests/` is attested to the trail as `integration-tests`. The workflow always succeeds — it reports facts. Kosli evaluates them. |
 | 3 | Approve `release-gate` in *Review deployments* | The job records **who approved it** to the trail, then runs `kosli assert artifact --policy release-gate`. If the integration test run was never reported, or was reported as failing, the gate fails and nothing is deployed. |
 | — | nothing | Once the gate opens, the exact JAR the gate approved is deployed to App Service and smoke-tested. |
