@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.kosli.mobilepay">
+    package="com.kosli.mobileorders">
 
     <!-- Scanner-driven, not an app requirement: mobsfscan raises error-level
          findings below minSdk 30, and task hijacking when uses-sdk is absent. -->
@@ -11,7 +11,7 @@
     <application
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
-        android:label="Mobile Pay">
+        android:label="Mobile Orders">
 
         <activity
             android:name=".MainActivity"

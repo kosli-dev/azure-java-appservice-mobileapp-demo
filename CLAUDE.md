@@ -10,7 +10,7 @@ A Kosli demo built for a customer evaluation. It covers **points 1 and 2** of th
 - **Point 1** — a Java component deployed to Azure App Service whose peer review, SonarQube
   quality gate, unit tests and mutation testing are all attested to Kosli, and whose right to
   be published is decided by a Kosli policy rather than by a green pipeline.
-- **Point 2** — the Mobile Pay mobile component (Android + iOS), scanned from source with
+- **Point 2** — the Mobile Orders mobile component (Android + iOS), scanned from source with
   mobsfscan, the SARIF report attested as a custom type whose jq rules are the gate. Merged in
   from the `mobile-app-example` repo; it was developed there and its git history lives there.
 
@@ -19,7 +19,7 @@ Kosli org: `kosli-public` for both.
 | Component | Flow | Artifacts | Template |
 | --- | --- | --- | --- |
 | Java backend | `orders-api-ci` | `orders-api` | `kosli/flow-templates/orders-api-ci.yml` |
-| Mobile app | `mobilepay` | `mobilepay-android`, `mobilepay-ios` | `kosli/flow-templates/mobilepay.yml` |
+| Mobile app | `mobileorders` | `mobileorders-android`, `mobileorders-ios` | `kosli/flow-templates/mobileorders.yml` |
 
 ## State
 
@@ -32,14 +32,15 @@ Verified before pushing:
   threshold, so the mutation control fails by design.
 - Every Kosli command dry-run against CLI **v2.38.0**.
 - `kosli/policies/*.yml` validated against `https://docs.kosli.com/schemas/policy/v1.json`.
-- `kosli/flow-templates/orders-api-ci.yml` validated against the `Template` model in Kosli's OpenAPI spec.
+- `kosli/flow-templates/orders-api-ci.yml` validated against the `Template` model in Kosli's
+  OpenAPI spec.
 - `actionlint` (with shellcheck), `shellcheck`, and `bicep build` all clean.
 
 For the mobile half, verified in the `mobile-app-example` repo before the merge: mobsfscan
 runs clean on both platforms (Android tuned to no error-level findings, iOS all `note`), and
 the flow, type and gate ran green in Actions. What the merge itself changed — the flow-template
 paths, the folded-in `mobile-sast` bootstrap, the `create flow` step moving into
-`mobilepay.yml`, the CLI pin — has not been run.
+`mobileorders.yml`, the CLI pin — has not been run.
 
 Not verified, and the first live run is the test of it:
 
@@ -101,7 +102,7 @@ separately via `target_artifacts` + `artifact_fingerprint`. See `scripts/waive_a
 switching to it later means changing the flow template and policy from
 `custom:sonarqube-quality-gate` to the built-in `sonar` type, and swapping one pipeline step.
 
-**One mobile flow, two artifacts, not two flows.** `mobilepay-android` and `mobilepay-ios`
+**One mobile flow, two artifacts, not two flows.** `mobileorders-android` and `mobileorders-ios`
 are artifacts of the same flow, so a trail is compliant only once both have been attested. Two
 path-filtered per-platform workflows would leave trails permanently missing an artifact. Hence
 one workflow with a platform matrix, and `begin trail` in its own job so the legs cannot race
@@ -112,7 +113,7 @@ creating the trail.
 the spec default of `warning`. mobsfscan omits it often, so `.level == "error"` alone silently
 ignores those findings. The rule in `scripts/bootstrap_kosli.sh` walks the fallback chain.
 
-**`mobilepay` is gated by `kosli assert artifact` with no `--policy`.** The `publish-gate`
+**`mobileorders` is gated by `kosli assert artifact` with no `--policy`.** The `publish-gate`
 policy spells out the orders-api controls (`peer-review`, `unit-tests`, …), so applying it to a
 mobile artifact would demand attestations that component never makes. Flow-template compliance
 is the gate there. A shared policy would mean either a mobile-specific policy or dropping

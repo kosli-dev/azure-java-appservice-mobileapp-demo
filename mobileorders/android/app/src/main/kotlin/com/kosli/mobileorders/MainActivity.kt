@@ -1,4 +1,4 @@
-package com.kosli.mobilepay
+package com.kosli.mobileorders
 
 import android.os.Bundle
 import android.widget.TextView
@@ -10,7 +10,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         val balance = TextView(this)
-        balance.text = "Mobile Pay"
+        balance.text = "Mobile Orders"
         setContentView(balance)
     }
 }

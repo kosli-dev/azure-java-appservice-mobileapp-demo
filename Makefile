@@ -3,7 +3,7 @@ SHELL := /usr/bin/env bash
 
 MOBSFSCAN_IMAGE ?= opensecurity/mobsfscan:latest
 
-APP       ?= mobilepay
+APP       ?= mobileorders
 PLATFORM  ?= android
 SRC       ?= $(APP)/$(PLATFORM)
 

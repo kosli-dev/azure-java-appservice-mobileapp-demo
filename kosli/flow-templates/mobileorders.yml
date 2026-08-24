@@ -5,11 +5,11 @@ trail:
   # One artifact per platform in one flow, so a trail is compliant only once
   # both platforms have been attested to it.
   # The requirement is per-artifact, not per-trail: the scan describes the app.
-  - name: mobilepay-android
+  - name: mobileorders-android
     attestations:
     - name: mobile-sast
       type: custom:mobile-sast
-  - name: mobilepay-ios
+  - name: mobileorders-ios
     attestations:
     - name: mobile-sast
       type: custom:mobile-sast

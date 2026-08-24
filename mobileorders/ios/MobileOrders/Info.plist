@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.kosli.mobilepay</string>
+    <string>com.kosli.mobileorders</string>
     <key>CFBundleName</key>
-    <string>Mobile Pay</string>
+    <string>Mobile Orders</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0</string>
     <key>MinimumOSVersion</key>

@@ -7,7 +7,7 @@ a Kosli policy** — not by a green pipeline.
 | Component | What it is | Flow |
 | --- | --- | --- |
 | `orders-api` | a Spring Boot service, built and deployed to Azure App Service | `orders-api-ci` |
-| `mobilepay` | the Mobile Pay app, Android and iOS, scanned from source | `mobilepay` |
+| `mobileorders` | the Mobile Orders app, Android and iOS, scanned from source | `mobileorders` |
 
 Between them they cover points 1 and 2 of the customer's demo scenario.
 
@@ -27,7 +27,7 @@ infrastructure defined as Bicep in [`infra/`](infra).
 
 ```
 kosli/flow-templates/orders-api-ci.yml  orders-api's definition of "done"
-kosli/flow-templates/mobilepay.yml      mobilepay's definition of "done"
+kosli/flow-templates/mobileorders.yml   the mobile app's definition of "done"
 kosli/attestation-types/*.json     JSON Schemas for the custom attestation types
 kosli/policies/publish-gate.yml    "may this component be published?"
 kosli/policies/prod-deploy-gate.yml  groundwork for the deployment gate (point 4)
@@ -37,7 +37,7 @@ pom.xml                            Java 21, JUnit 5, JaCoCo, PIT mutation testin
 sonar/quality-gate-{pass,fail}.json  SonarQube quality-gate reports to import
 infra/main.bicep                   Linux App Service plan + Java SE web app
 
-mobilepay/android/, mobilepay/ios/ the mobile app source, scanned by mobsfscan
+mobileorders/{android,ios}/        the mobile app source, scanned by mobsfscan
 Makefile                           scan and package the mobile app (Docker, no toolchain)
 
 scripts/bootstrap_kosli.sh         creates the attestation types and the policy
@@ -47,7 +47,7 @@ scripts/mutation_attestation.py    turns the PIT XML report into attestation dat
 scripts/waive_attestation.sh       records a waiver (override) with a reason
 
 .github/workflows/ci-cd.yml        orders-api: build → attest → publish gate → deploy
-.github/workflows/mobilepay.yml    mobilepay: package → scan → attest → publish gate
+.github/workflows/mobileorders.yml  mobileorders: package → scan → attest → publish gate
 .github/workflows/pr.yml           fast checks on the pull request
 .github/workflows/kosli-bootstrap.yml   run the bootstrap script from the Actions tab
 .github/workflows/waive-attestation.yml waive a blocked control from the Actions tab
@@ -136,8 +136,8 @@ The merge triggers `CI/CD`. The `pull_request` and `peer-review` attestations ar
 merge commit, so a real (approved) pull request is what makes the peer-review control pass.
 
 **2. Watch the build-and-attest job.**
-It creates/updates the flow from `kosli/flow-templates/orders-api-ci.yml`, begins the trail for the commit,
-builds the JAR, fingerprints the deployable, and attests: pull request, peer review, unit
+It creates/updates the flow from `kosli/flow-templates/orders-api-ci.yml`, begins the trail
+for the commit, builds the JAR, fingerprints the deployable, and attests: pull request, peer review, unit
 tests, SonarQube quality gate, mutation testing. The PIT HTML report and the Sonar report go
 to the Kosli Evidence Vault as attachments.
 
@@ -177,9 +177,9 @@ lands on App Service. `https://<webapp>.azurewebsites.net/api/health` answers, a
 To show the failing-Sonar variant instead, run the CI/CD workflow manually with
 `sonar_result: fail`.
 
-## Point 2 — Mobile Pay (Android + iOS)
+## Point 2 — Mobile Orders (Android + iOS)
 
-**Mobile Pay** is scanned for mobile security issues, the scan is attested to Kosli, and
+**Mobile Orders** is scanned for mobile security issues, the scan is attested to Kosli, and
 Kosli decides whether the app may be published. Android and iOS, both scanned from source.
 Nothing is built yet — see [Next steps](#next-steps-for-the-rest-of-the-scenario).
 
@@ -188,7 +188,7 @@ Nothing is built yet — see [Next steps](#next-steps-for-the-rest-of-the-scenar
 | Where | Owns |
 | --- | --- |
 | `Makefile` | anything that turns source into an artifact — scanning now, building later. No kosli, no API token. |
-| `.github/workflows/mobilepay.yml` | everything that talks to Kosli — the trail, the attestations, the gate. |
+| `.github/workflows/mobileorders.yml` | everything that talks to Kosli — the trail, the attestations, the gate. |
 
 So the pipeline only ever runs in GitHub Actions. Locally you can scan and package; you
 cannot attest or gate.
@@ -201,9 +201,9 @@ container, and so will the Android build.
 ```sh
 make                        # list targets
 make scan                   # -> build/mobsfscan-android.sarif
-make package                # -> build/mobilepay-android.zip
+make package                # -> build/mobileorders-android.zip
 make scan PLATFORM=ios      # -> build/mobsfscan-ios.sarif
-make package PLATFORM=ios   # -> build/mobilepay-ios.zip
+make package PLATFORM=ios   # -> build/mobileorders-ios.zip
 make clean
 ```
 
@@ -258,7 +258,7 @@ same trail.
 
 Each leg asserts its own artifact, which answers "may this platform build be published".
 Whether *both* platforms are present is trail compliance, and that is what the deployment gate
-will check at point 4. `mobilepay` does not use the `publish-gate` policy: that policy names
+will check at point 4. `mobileorders` does not use the `publish-gate` policy: that policy names
 the orders-api controls, so `kosli assert artifact` on flow-template compliance is the gate
 here.
 
@@ -278,7 +278,7 @@ here.
 - iOS needed no tuning to pass — unlike the Android manifest, its 5 findings are all `note`.
   `NSAppTransportSecurity` is left empty on purpose: ATS defaults are secure, and adding
   `NSAllowsArbitraryLoads` is what would trip the scanner.
-- `com.kosli.mobilepay` becomes the Play Store application id if this is ever built for real.
+- `com.kosli.mobileorders` becomes the Play Store application id if this is ever built for real.
 
 ## Deliberate simplifications
 

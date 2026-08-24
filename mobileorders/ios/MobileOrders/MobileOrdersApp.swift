@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct MobilePayApp: App {
+struct MobileOrdersApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -11,6 +11,6 @@ struct MobilePayApp: App {
 
 struct ContentView: View {
     var body: some View {
-        Text("Mobile Pay")
+        Text("Mobile Orders")
     }
 }
