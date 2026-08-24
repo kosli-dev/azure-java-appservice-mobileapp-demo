@@ -6,7 +6,7 @@ a Kosli policy** — not by a green pipeline.
 
 | Component | What it is | Flow |
 | --- | --- | --- |
-| `orders-api` | a Spring Boot service, built and deployed to Azure App Service | `orders-api-ci` |
+| `orders-api` | a Spring Boot service, built for Azure App Service | `orders-api-ci` |
 | `mobileorders` | the Mobile Orders app, Android and iOS, scanned from source | `mobileorders` |
 
 Both are then released together, as one order system, through a release process where a
@@ -14,7 +14,7 @@ human can start the gate but only Kosli can open it.
 
 | Process | What it is | Flow |
 | --- | --- | --- |
-| Release | a tag builds the release, an integration test run is reported to it, and a policy decides whether it goes out | `order-system-release` |
+| Release | a tag builds the release, an integration test run is reported to it, a policy decides whether it goes out, and only then is it deployed | `order-system-release` |
 
 Between them they cover points 1, 2 and 3 of the customer's demo scenario.
 
@@ -27,8 +27,9 @@ Between them they cover points 1, 2 and 3 of the customer's demo scenario.
 | Create a waiver for mutation testing | PIT results are attested with the threshold they are judged against. The score is below threshold on purpose, so the gate blocks — then the failure is waived with a recorded reason | [`scripts/waive_attestation.sh`](scripts/waive_attestation.sh), [`.github/workflows/waive-attestation.yml`](.github/workflows/waive-attestation.yml) |
 | Check if this component may be published, and show how the policy is created | `kosli assert artifact --policy publish-gate` in its own pipeline job, against a policy created from a YAML file in this repo | [`kosli/policies/publish-gate.yml`](kosli/policies/publish-gate.yml), [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) |
 
-The pipeline also builds and deploys the service to Azure App Service, with the
-infrastructure defined as Bicep in [`infra/`](infra).
+The pipeline builds the service but does not deploy it: the only route to App Service is a
+tagged release that cleared the release gate (see [Point 3](#point-3--the-release-process)).
+The infrastructure is defined as Bicep in [`infra/`](infra).
 
 ## The moving parts
 
@@ -56,9 +57,9 @@ scripts/sonar_attestation.py       imports a SonarQube quality-gate report
 scripts/mutation_attestation.py    turns the PIT XML report into attestation data
 scripts/waive_attestation.sh       records a waiver (override) with a reason
 
-.github/workflows/ci-cd.yml        orders-api: build → attest → publish gate → deploy
+.github/workflows/ci-cd.yml        orders-api: build → attest → publish gate
 .github/workflows/mobileorders.yml  mobileorders: package → scan → attest → publish gate
-.github/workflows/release.yml      a tag: build the release → wait for approval → release gate
+.github/workflows/release.yml      a tag: build → approval → release gate → publish → deploy
 .github/workflows/report-integration-test-result.yml  report a run to a release trail
 .github/workflows/pr.yml           fast checks on the pull request
 .github/workflows/kosli-bootstrap.yml   run the bootstrap script from the Actions tab
@@ -136,8 +137,8 @@ Optional variables that tune the demo without editing code:
 | `KOSLI_DRY_RUN` | unset | Set to `true` to run the pipeline without sending anything to Kosli. |
 | `REPORT_AZURE_ENV` | unset | Set to `true` to enable the scheduled Azure environment reporting. |
 
-GitHub environments gate three jobs: `production` the deploy job, `waivers` the waiver
-workflow, and `production-release` the release gate. **Add required reviewers to
+GitHub environments gate three jobs: `production-release` the release gate, `production` the
+deploy job at the end of the release, and `waivers` the waiver workflow. **Add required reviewers to
 `production-release`** — without them the release workflow runs straight through and there is
 nothing to halt, which is the whole shape of the release demo. Add them to the other two as
 well if you want to show four-eyes approval there.
@@ -168,7 +169,7 @@ the surviving mutants listed in the attestation.
 kosli assert artifact --fingerprint <sha256> --policy publish-gate
 ```
 
-fails, the deploy job never starts, and the job log prints how to unblock. This is the
+fails, the component may not be published, and the job log prints how to unblock. This is the
 answer to "may this component be published?" — and it is the same answer for anyone asking,
 whether that is CI, a release manager or an auditor.
 
@@ -187,9 +188,9 @@ waived it, when, and why. Nothing was deleted or edited — the original failure
 there, with the waiver attached to it.
 
 **5. Re-run the publish gate.**
-Re-run the failed jobs on the CI/CD run. The gate passes, the deploy job runs, and the JAR
-lands on App Service. `https://<webapp>.azurewebsites.net/api/health` answers, and
-`/api/version` reports the commit the artifact came from.
+Re-run the failed jobs on the CI/CD run. The gate passes, and the component is cleared for
+release. Getting it onto App Service is the release process — see
+[Point 3](#point-3--the-release-process).
 
 To show the failing-Sonar variant instead, run the CI/CD workflow manually with
 `sonar_result: fail`.
@@ -308,7 +309,8 @@ reported and judged clean.
 | --- | --- | --- |
 | 1 | `git tag v0.0.1 && git push origin v0.0.1` | The **Release** workflow rebuilds the backend and both mobile packages from the tagged commit, attests all three to the release trail, and stops at the `release-gate` job, which is waiting on the protected `production-release` environment. |
 | 2 | Run **Report integration test result** with tag `v0.0.1` and result `pass` or `fail` | One of the two canned runs under `integration-tests/` is attested to the trail as `integration-tests`. The workflow always succeeds — it reports facts. Kosli evaluates them. |
-| 3 | Approve `release-gate` in *Review deployments* | The job runs `kosli assert artifact --policy release-gate`. If the run was never reported, or was reported as failing, the gate fails and no release is published. |
+| 3 | Approve `release-gate` in *Review deployments* | The job runs `kosli assert artifact --policy release-gate`. If the run was never reported, or was reported as failing, the gate fails and nothing is published or deployed. |
+| — | nothing | Once the gate opens: the GitHub release is published, and then the exact JAR the gate approved is deployed to App Service and smoke-tested. |
 
 The point of step 3 is that pressing continue is **not** the decision. The approval only lets
 the job start; what the job does is ask Kosli. So the demo has two distinct failure modes to
@@ -317,12 +319,27 @@ show:
 ```bash
 # approve without reporting anything -> blocked: the trail is missing integration-tests
 # report `fail`, then approve       -> blocked: .failed == 0 and .errors == 0 are false
-# report `pass`, then approve       -> the gate passes and the GitHub release is published
+# report `pass`, then approve       -> published, deployed, smoke-tested
 ```
 
 Reporting again adds another attestation to the trail rather than replacing it, and Kosli
 judges the latest — so after a blocked release you re-report as `pass` and re-run the
 `release-gate` job, with both reports left on the trail as evidence.
+
+### Publish, then deploy
+
+The GitHub release is published *before* the deploy, and the deploy job downloads the same
+build the gate approved rather than rebuilding. The published release is the immutable record
+of what was approved; deploying is what consumes it, which is what makes re-deploying or
+rolling back to `v0.0.1` later a normal operation rather than a re-run of a build.
+
+It also means a failed deploy leaves a published release with production still on the old
+version. That is the honest state, and Kosli's environment snapshot — not the GitHub release
+— is what says which fingerprint is actually running.
+
+**Nothing else deploys.** `ci-cd.yml` builds, attests and gates the component on every push
+to `main`, but a tagged release that cleared the release gate is the only route to the
+server.
 
 ### What the release contains
 
