@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # One-time (idempotent) setup of the org-level Kosli objects this demo needs:
-#   * four custom attestation types, each carrying the jq rules that DECIDE compliance
+#   * five custom attestation types, each carrying the jq rules that DECIDE compliance
 #   * the publish-gate policy that `kosli assert artifact` enforces in CI
 #   * the release-gate policy the release workflow enforces after the manual approval
 #
@@ -70,6 +70,21 @@ kosli create attestation-type integration-test \
   --summary "Passed=.passed" \
   --summary "Failed=.failed" \
   --summary "Errors=.errors"
+
+echo "==> approval-github-workflow attestation type"
+# Who pressed "Approve" on a job waiting on a protected environment, read back from the
+# run's approvals API. github.actor is the person who triggered the run - for a tagged
+# release, whoever pushed the tag - so the approver has to come from the API.
+kosli create attestation-type approval-github-workflow \
+  --description "Approval of a GitHub Actions job waiting on a protected environment: who approved it, for which environment." \
+  --schema kosli/attestation-types/approval-github-workflow.schema.json \
+  --jq '.state == "approved"' \
+  --jq '.user.login != ""' \
+  --summary "Approver=.user.login" \
+  --summary "State=.state" \
+  --summary "Environment=.environments[0].name" \
+  --summary "Approved at=.environments[0].updated_at" \
+  --summary "Comment=.comment"
 
 echo "==> publish-gate policy"
 kosli create policy publish-gate kosli/policies/publish-gate.yml \

@@ -176,6 +176,22 @@ story is "nothing reaches production except through the release gate", and two r
 same App Service would have contradicted it. `id-token: write` went with it, since the Azure
 OIDC login was its only user.
 
+**The approver is read from the approvals API, not from `github.actor`.** For a tagged
+release `github.actor` is whoever pushed the tag, which is exactly the person the approval
+is supposed to be independent of. `.github/actions/get-github-workflow-approver` calls
+`GET /repos/{repo}/actions/runs/{run_id}/approvals` and picks the entry for the
+`production-release` environment; the gate job attests it as `release-approval`. Ported from
+`kosli-dev/github-release-example`, which does the same thing against a `Production`
+environment and attests it against an artifact fingerprint — here it is trail-level, like
+`integration-tests`, because the approval is about the release rather than one binary.
+The job needs `permissions: actions: read` for that API.
+
+**The approval is attested before the policy assert, in the same job.** The flow template
+requires `release-approval`, and the policy requires the trail to be compliant, so the order
+matters. It also means the action fails the job outright if the environment has no required
+reviewers: there is no approval entry to read, which is the correct outcome — an unprotected
+environment cannot produce evidence of a human decision.
+
 **The release gate runs after the approval, not before it.** The `release-gate` job sits on
 the protected `production-release` environment, so approving it only lets the job *start*;
 the job then runs `kosli assert artifact --policy release-gate`. That ordering is the whole
@@ -227,6 +243,10 @@ installed.
 - **`KOSLI_DRY_RUN=true` makes the release gate pass no matter what** — `kosli assert` exits 0
   in dry-run mode. Same for the publish gate. Fine for rehearsing the pipeline, useless for
   rehearsing the gate.
+- **Re-running the gate job re-attests the same approver.** The approvals API returns the
+  run's approvals, and a re-run does not create a new one, so a blocked release that is
+  re-reported and re-run records the original approval again. Fine here; worth knowing before
+  anyone reads the trail as "approved twice".
 - **The release deploy job uses the `production` environment, the gate uses
   `production-release`.** Two environments on purpose: the halt belongs to the gate, and
   `production` carries the deployment URL that shows up in the Actions UI.
