@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # One-time (idempotent) setup of the org-level Kosli objects this demo needs:
-#   * six custom attestation types, each carrying the jq rules that DECIDE compliance
+#   * five custom attestation types, each carrying the jq rules that DECIDE compliance
 #   * the publish-gate policy that `kosli assert artifact` enforces in CI
 #   * the release-gate policy the release workflow enforces after the manual approval
 #
@@ -29,18 +29,6 @@ kosli create attestation-type peer-review \
   --summary "Author=.author" \
   --summary "Approvers=.distinct_approvers" \
   --summary "Independent approval=.independent_approval"
-
-echo "==> sonarqube-quality-gate attestation type"
-kosli create attestation-type sonarqube-quality-gate \
-  --description "SonarQube quality gate result for a component: the gate must pass with no failing conditions." \
-  --schema kosli/attestation-types/sonarqube-quality-gate.schema.json \
-  --jq '.projectStatus.status == "OK"' \
-  --jq '[.projectStatus.conditions[] | select(.status != "OK")] | length == 0' \
-  --summary "Quality gate=.projectStatus.status" \
-  --summary "Coverage=.measures.coverage" \
-  --summary "Bugs=.measures.bugs" \
-  --summary "Vulnerabilities=.measures.vulnerabilities" \
-  --summary "Project=.project.key"
 
 echo "==> mutation-testing attestation type"
 kosli create attestation-type mutation-testing \

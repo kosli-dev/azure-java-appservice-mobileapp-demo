@@ -23,7 +23,7 @@ Between them they cover points 1, 2 and 3 of the customer's demo scenario.
 | Capability asked for | How it works here | Where to look |
 | --- | --- | --- |
 | Evaluate the pull request for a peer review | `pull_request` attestation for the raw evidence, plus a `peer-review` custom attestation whose jq rules require two distinct approvers **or** one approver who wrote none of the code | [`scripts/peer_review_attestation.py`](scripts/peer_review_attestation.py), [`scripts/bootstrap_kosli.sh`](scripts/bootstrap_kosli.sh) |
-| Import and evaluate a passing SonarQube report | The quality-gate report is imported and attested as a `sonarqube-quality-gate` custom attestation; Kosli's jq rules decide whether the gate passed | [`sonar/`](sonar), [`scripts/sonar_attestation.py`](scripts/sonar_attestation.py) |
+| Evaluate a SonarQube quality gate | A real SonarCloud scan runs in CI; SonarCloud attests the quality-gate result straight to the trail via Kosli's built-in `sonar` attestation type, over the webhook configured on the Sonar project | [`sonar-project.properties`](sonar-project.properties), [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) |
 | Create a waiver for mutation testing | PIT results are attested with the threshold they are judged against. The score is below threshold on purpose, so the gate blocks — then the failure is waived with a recorded reason | [`scripts/waive_attestation.sh`](scripts/waive_attestation.sh), [`.github/workflows/waive-attestation.yml`](.github/workflows/waive-attestation.yml) |
 | Check if this component may be published, and show how the policy is created | `kosli assert artifact --policy publish-gate` in its own pipeline job, against a policy created from a YAML file in this repo | [`kosli/policies/publish-gate.yml`](kosli/policies/publish-gate.yml), [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) |
 
@@ -44,7 +44,7 @@ kosli/policies/prod-deploy-gate.yml  groundwork for the deployment gate (point 4
 
 src/                               Spring Boot service (a pricing endpoint)
 pom.xml                            Java 21, JUnit 5, JaCoCo, PIT mutation testing
-sonar/quality-gate-{pass,fail}.json  SonarQube quality-gate reports to import
+sonar-project.properties          SonarCloud project key, org, sources and JaCoCo report path
 integration-tests/result-{pass,fail}.json  integration test runs to report to a release
 infra/main.bicep                   Linux App Service plan + Java SE web app
 
@@ -53,7 +53,6 @@ Makefile                           scan and package the mobile app (Docker, no t
 
 scripts/bootstrap_kosli.sh         creates the attestation types and the policy
 scripts/peer_review_attestation.py collects pull-request review facts
-scripts/sonar_attestation.py       imports a SonarQube quality-gate report
 scripts/mutation_attestation.py    turns the PIT XML report into attestation data
 scripts/waive_attestation.sh       records a waiver (override) with a reason
 
@@ -75,17 +74,17 @@ Nothing in this repo decides pass or fail. The scripts collect facts; Kosli eval
 | Control | Rule, evaluated by Kosli |
 | --- | --- |
 | `peer-review` | `.pull_request_url != null` and `(.distinct_approvers >= 2) or (.independent_approval == true)` |
-| `sonar-quality-gate` | `.projectStatus.status == "OK"` and no condition with a non-`OK` status |
+| `sonar-quality-gate` | Kosli's built-in `sonar` attestation type: the SonarQube quality gate must pass |
 | `mutation-tests` | `.total_mutations > 0` and `.mutation_score >= .threshold` |
 | `unit-tests` | built-in `junit` attestation type |
 | `mobile-sast` | no `error`-level SARIF finding, and the report really is SARIF 2.1.0 from mobsfscan — see [the rule](#the-compliance-rule) |
 | `integration-tests` | `.total > 0`, `.failed == 0` and `.errors == 0` — a run that fell over is not a pass either |
 | `release-approval` | `.state == "approved"` and `.user.login != ""` — a named human approved the release |
 
-Those rules live on the attestation types (see `scripts/bootstrap_kosli.sh`), so they apply
-to every component that uses the type — change the rule once, every pipeline is judged by
-the new one. The flow template says which controls this component needs; the publish-gate
-policy says what it takes to be published.
+Those rules live on the attestation types — the custom ones in `scripts/bootstrap_kosli.sh`,
+`sonar` built into Kosli — so they apply to every component that uses the type — change a
+custom rule once, every pipeline is judged by the new one. The flow template says which
+controls this component needs; the publish-gate policy says what it takes to be published.
 
 ## Setup
 
@@ -100,14 +99,34 @@ Repository secret:
 Then run the **Bootstrap Kosli** workflow from the Actions tab (or `./scripts/bootstrap_kosli.sh`
 locally with `KOSLI_ORG` and `KOSLI_API_TOKEN` set — the Kosli CLI only recognizes the token
 from an env var named `KOSLI_API_TOKEN`, so the workflows map the `KOSLI_PUBLIC_API_TOKEN`
-secret onto it). It creates the six custom attestation types and the `publish-gate` and `release-gate`
+secret onto it). It creates the five custom attestation types and the `publish-gate` and `release-gate`
 policies.
 
 > The attestation types are org-level objects. If `kosli-public` already has a type with one
 > of these names, run `kosli list attestation-types` first — re-running the bootstrap would
 > version that existing type rather than create a new one.
 
-### 2. Azure
+### 2. SonarCloud
+
+The `sonar-quality-gate` control is Kosli's built-in `sonar` attestation type, fed by a
+webhook — not a `kosli attest` call in the pipeline. In the Kosli app, under the org's Sonar
+integration, enable it and copy the webhook URL and secret it gives you; add that webhook to
+the SonarCloud project (Project Settings > Webhooks), pointing at `kosli-dev_azure-java-appservice-demo`
+in the `kosli-dev` organization (edit [`sonar-project.properties`](sonar-project.properties)
+if yours differ).
+
+Repository secret:
+
+| Secret | Value |
+| --- | --- |
+| `SONAR_TOKEN` | A SonarCloud token that can analyze the project |
+
+> Disable SonarCloud's **Automatic Analysis** for this project (Administration > Analysis
+> Method). It conflicts with CI-based analysis for the same commit, and it does not carry the
+> `sonar.analysis.kosli_*` scanner properties the workflow sets, so the webhook would fire
+> without enough context to attest to the right flow/trail/artifact.
+
+### 3. Azure
 
 ```bash
 az login
@@ -135,7 +154,6 @@ Optional variables that tune the demo without editing code:
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `MUTATION_THRESHOLD` | `85` | Mutation score the component must reach. The service scores ~76%, so the default blocks the publish gate. Set it to `70` for a clean run. |
-| `SONAR_RESULT` | `pass` | Which quality-gate report to import (`pass` or `fail`). |
 | `KOSLI_DRY_RUN` | unset | Set to `true` to run the pipeline without sending anything to Kosli. |
 | `REPORT_AZURE_ENV` | unset | Set to `true` to enable the scheduled Azure environment reporting. |
 
@@ -147,9 +165,9 @@ well if you want to show four-eyes approval there.
 
 ## Running the orders-api demo
 
-The story is: a change arrives with a proper review and a clean Sonar report, but its tests
-are weak — and the component cannot be published until somebody takes responsibility for
-that in writing.
+The story is: a change arrives with a proper review and a clean SonarCloud quality gate, but
+its tests are weak — and the component cannot be published until somebody takes
+responsibility for that in writing.
 
 **1. Open a pull request, have someone approve it, merge it.**
 The merge triggers `CI/CD`. The `pull_request` and `peer-review` attestations are about that
@@ -157,9 +175,11 @@ merge commit, so a real (approved) pull request is what makes the peer-review co
 
 **2. Watch the build-and-attest job.**
 It creates/updates the flow from `kosli/flow-templates/orders-api-ci.yml`, begins the trail
-for the commit, builds the JAR, fingerprints the deployable, and attests: pull request, peer review, unit
-tests, SonarQube quality gate, mutation testing. The PIT HTML report and the Sonar report go
-to the Kosli Evidence Vault as attachments.
+for the commit, builds the JAR, fingerprints the deployable, and attests: pull request, peer
+review, unit tests, mutation testing. The PIT HTML report goes to the Kosli Evidence Vault as
+an attachment. The SonarCloud scan runs as its own step and attests the quality gate to the
+same trail itself, over the webhook, once analysis completes — there is no `kosli attest`
+call for it, so it can land moments after the job finishes rather than during it.
 
 Open the trail in Kosli — `app.kosli.com/kosli-public/flows/orders-api-ci/trails/<sha>` — and
 walk the controls: four green, mutation testing red at ~76% against an 85% threshold, with
@@ -194,8 +214,10 @@ Re-run the failed jobs on the CI/CD run. The gate passes, and the component is c
 release. Getting it onto App Service is the release process — see
 [Point 3](#point-3--the-release-process).
 
-To show the failing-Sonar variant instead, run the CI/CD workflow manually with
-`sonar_result: fail`.
+The Sonar quality gate now reflects the real code, not a canned variant. To show it blocking
+instead, push a change that trips the SonarCloud quality gate for this project (e.g. a new
+bug/vulnerability-level issue, or a coverage drop on new code) — or temporarily tighten the
+quality gate's conditions in SonarCloud.
 
 ## Point 2 — Mobile Orders (Android + iOS)
 
@@ -370,8 +392,9 @@ pipelines.
 
 ### Where the release control lives
 
-`integration-tests` is attested at **trail** level, not on an artifact: it is about the
-combination of the components, not any one binary. That is also why
+`integration-tests` and `release-approval` are attested at **trail** level, not on an
+artifact: they are about the release — the combination of the components, and the decision to
+ship them — rather than any one binary. That is also why
 [`kosli/policies/release-gate.yml`](kosli/policies/release-gate.yml) carries no `attestations:`
 list the way `publish-gate` does — that list matches attestations on the artifact. The release
 gate leans on `trail-compliance: required: true` instead, and the flow template
@@ -379,20 +402,6 @@ gate leans on `trail-compliance: required: true` instead, and the flow template
 the control set.
 
 ## Deliberate simplifications
-
-**The SonarQube report is canned.** The reports under `sonar/` have the shape of SonarQube's
-`api/qualitygates/project_status` response, and they are imported and evaluated exactly like
-a real one — but no Sonar server is contacted, so the demo is fast and deterministic. With a
-real SonarQube Cloud or Server project, replace the import step with Kosli's built-in Sonar
-attestation, which pulls the quality gate straight from the server:
-
-```bash
-kosli attest sonar --name orders-api.sonar-quality-gate \
-  --sonar-api-token "$SONAR_TOKEN" --sonar-working-dir .scannerwork
-```
-
-That is a one-step change: `kosli attest sonar` is a built-in attestation type, so the flow
-template and the policy switch from `custom:sonarqube-quality-gate` to `sonar`.
 
 **Mutation testing does not fail the Maven build.** PIT reports the score and Maven carries
 on; the threshold is enforced by Kosli, which is the point — the control and the waiver live
