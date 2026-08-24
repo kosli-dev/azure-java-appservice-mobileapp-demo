@@ -1,11 +1,17 @@
-# orders-api — Kosli demo: Java backend on Azure App Service
+# Kosli demo — a Java backend and a mobile app
 
-A working demo of Kosli governing a Java component: a Spring Boot service, built and
-deployed to Azure App Service by GitHub Actions, where **every control the component has to
-pass is attested to Kosli, and the decision to publish is made by a Kosli policy** — not by
-a green pipeline.
+A working demo of Kosli governing two components of the same application, where **every
+control a component has to pass is attested to Kosli, and the decision to publish is made by
+a Kosli policy** — not by a green pipeline.
 
-This covers point 1 of the customer's demo scenario:
+| Component | What it is | Flow |
+| --- | --- | --- |
+| `orders-api` | a Spring Boot service, built and deployed to Azure App Service | `orders-api-ci` |
+| `mobileorders` | the Mobile Orders app, Android and iOS, scanned from source | `mobileorders` |
+
+Between them they cover points 1 and 2 of the customer's demo scenario.
+
+## Point 1 — orders-api (Java on Azure App Service)
 
 | Capability asked for | How it works here | Where to look |
 | --- | --- | --- |
@@ -20,8 +26,9 @@ infrastructure defined as Bicep in [`infra/`](infra).
 ## The moving parts
 
 ```
-kosli/flow-template.yml            the component's definition of "done"
-kosli/attestation-types/*.json     JSON Schemas for the three custom attestation types
+kosli/flow-templates/orders-api-ci.yml  orders-api's definition of "done"
+kosli/flow-templates/mobileorders.yml   the mobile app's definition of "done"
+kosli/attestation-types/*.json     JSON Schemas for the custom attestation types
 kosli/policies/publish-gate.yml    "may this component be published?"
 kosli/policies/prod-deploy-gate.yml  groundwork for the deployment gate (point 4)
 
@@ -30,13 +37,17 @@ pom.xml                            Java 21, JUnit 5, JaCoCo, PIT mutation testin
 sonar/quality-gate-{pass,fail}.json  SonarQube quality-gate reports to import
 infra/main.bicep                   Linux App Service plan + Java SE web app
 
+mobileorders/{android,ios}/        the mobile app source, scanned by mobsfscan
+Makefile                           scan and package the mobile app (Docker, no toolchain)
+
 scripts/bootstrap_kosli.sh         creates the attestation types and the policy
 scripts/peer_review_attestation.py collects pull-request review facts
 scripts/sonar_attestation.py       imports a SonarQube quality-gate report
 scripts/mutation_attestation.py    turns the PIT XML report into attestation data
 scripts/waive_attestation.sh       records a waiver (override) with a reason
 
-.github/workflows/ci-cd.yml        build → attest → publish gate → deploy
+.github/workflows/ci-cd.yml        orders-api: build → attest → publish gate → deploy
+.github/workflows/mobileorders.yml  mobileorders: package → scan → attest → publish gate
 .github/workflows/pr.yml           fast checks on the pull request
 .github/workflows/kosli-bootstrap.yml   run the bootstrap script from the Actions tab
 .github/workflows/waive-attestation.yml waive a blocked control from the Actions tab
@@ -53,6 +64,7 @@ Nothing in this repo decides pass or fail. The scripts collect facts; Kosli eval
 | `sonar-quality-gate` | `.projectStatus.status == "OK"` and no condition with a non-`OK` status |
 | `mutation-tests` | `.total_mutations > 0` and `.mutation_score >= .threshold` |
 | `unit-tests` | built-in `junit` attestation type |
+| `mobile-sast` | no `error`-level SARIF finding, and the report really is SARIF 2.1.0 from mobsfscan — see [the rule](#the-compliance-rule) |
 
 Those rules live on the attestation types (see `scripts/bootstrap_kosli.sh`), so they apply
 to every component that uses the type — change the rule once, every pipeline is judged by
@@ -72,7 +84,7 @@ Repository secret:
 Then run the **Bootstrap Kosli** workflow from the Actions tab (or `./scripts/bootstrap_kosli.sh`
 locally with `KOSLI_ORG` and `KOSLI_API_TOKEN` set — the Kosli CLI only recognizes the token
 from an env var named `KOSLI_API_TOKEN`, so the workflows map the `KOSLI_PUBLIC_API_TOKEN`
-secret onto it). It creates the three custom attestation types and the `publish-gate` policy.
+secret onto it). It creates the four custom attestation types and the `publish-gate` policy.
 
 > The attestation types are org-level objects. If `kosli-public` already has a type with one
 > of these names, run `kosli list attestation-types` first — re-running the bootstrap would
@@ -113,7 +125,7 @@ Optional variables that tune the demo without editing code:
 A GitHub environment named `production` gates the deploy job, and one named `waivers` gates
 the waiver workflow — add required reviewers to either if you want to show four-eyes approval.
 
-## Running the demo
+## Running the orders-api demo
 
 The story is: a change arrives with a proper review and a clean Sonar report, but its tests
 are weak — and the component cannot be published until somebody takes responsibility for
@@ -124,8 +136,8 @@ The merge triggers `CI/CD`. The `pull_request` and `peer-review` attestations ar
 merge commit, so a real (approved) pull request is what makes the peer-review control pass.
 
 **2. Watch the build-and-attest job.**
-It creates/updates the flow from `kosli/flow-template.yml`, begins the trail for the commit,
-builds the JAR, fingerprints the deployable, and attests: pull request, peer review, unit
+It creates/updates the flow from `kosli/flow-templates/orders-api-ci.yml`, begins the trail
+for the commit, builds the JAR, fingerprints the deployable, and attests: pull request, peer review, unit
 tests, SonarQube quality gate, mutation testing. The PIT HTML report and the Sonar report go
 to the Kosli Evidence Vault as attachments.
 
@@ -165,6 +177,109 @@ lands on App Service. `https://<webapp>.azurewebsites.net/api/health` answers, a
 To show the failing-Sonar variant instead, run the CI/CD workflow manually with
 `sonar_result: fail`.
 
+## Point 2 — Mobile Orders (Android + iOS)
+
+**Mobile Orders** is scanned for mobile security issues, the scan is attested to Kosli, and
+Kosli decides whether the app may be published. Android and iOS, both scanned from source.
+Nothing is built yet — see [Next steps](#next-steps-for-the-rest-of-the-scenario).
+
+### How the work is split
+
+| Where | Owns |
+| --- | --- |
+| `Makefile` | anything that turns source into an artifact — scanning now, building later. No kosli, no API token. |
+| `.github/workflows/mobileorders.yml` | everything that talks to Kosli — the trail, the attestations, the gate. |
+
+So the pipeline only ever runs in GitHub Actions. Locally you can scan and package; you
+cannot attest or gate.
+
+### Local use
+
+Docker, `make`, `git` and `zip`. **No JDK, Android SDK or kosli CLI** — the scanner runs in a
+container, and so will the Android build.
+
+```sh
+make                        # list targets
+make scan                   # -> build/mobsfscan-android.sarif
+make package                # -> build/mobileorders-android.zip
+make scan PLATFORM=ios      # -> build/mobsfscan-ios.sarif
+make package PLATFORM=ios   # -> build/mobileorders-ios.zip
+make clean
+```
+
+Every target is per-platform; `PLATFORM` defaults to `android`.
+
+### What the pipeline does
+
+| Step | Where | What the audience sees |
+| --- | --- | --- |
+| Build | `make package` | the app packaged into `build/` |
+| Scan | `make scan` | [mobsfscan](https://github.com/MobSF/mobsfscan) analyses the app and writes SARIF 2.1.0 |
+| Attest | `kosli attest artifact` + `attest custom` | the app and its scan land in Kosli as a fingerprinted artifact plus an attestation |
+| Evaluate | Kosli | the `mobile-sast` rules run and mark the attestation compliant or not |
+| Gate | `kosli assert artifact` | exits 0 or non-zero: may this be published? |
+
+mobsfscan is mobile-specific SAST over Java, Kotlin, Android XML, `Info.plist`, Swift and
+Objective-C, with native SARIF output. It needs no account and analyses **source**, which is
+why this works before there is any build.
+
+### The compliance rule
+
+`scripts/bootstrap_kosli.sh` creates a custom attestation type, `mobile-sast`, with three jq
+rules — all must return `true` for a scan to be compliant:
+
+| Rule | Why |
+| --- | --- |
+| no `error`-level results | the security bar; `warning` and `note` pass |
+| `.version == "2.1.0"` | rejects anything that is not SARIF 2.1.0 |
+| `.runs[0].tool.driver.name == "mobsfscan"` | stops an unrelated tool's clean report from satisfying a mobile-SAST requirement |
+
+The severity rule is more careful than it looks:
+
+```jq
+[.runs[] | .tool.driver.rules as $rules | .results[]
+ | (.level // $rules[.ruleIndex].defaultConfiguration.level // "warning")]
+| any(. == "error") | not
+```
+
+SARIF's `level` is **optional on a result**: when absent the effective level comes from the
+rule's `defaultConfiguration`, and failing that the spec default of `warning`. mobsfscan
+omits it on a good number of results, so the obvious `.level == "error"` test silently
+ignores them.
+
+The flow template requires the attestation on the **artifact** rather than the trail, because
+the scan is a property of the app, not of the build.
+
+Both platforms are in **one** flow with one artifact each, so a trail is compliant only when
+both have been attested. That is why they are one workflow with a platform matrix rather than
+two workflows — a path-filtered per-platform workflow would leave trails permanently missing
+an artifact. `begin trail` gets its own job so the two matrix legs cannot race creating the
+same trail.
+
+Each leg asserts its own artifact, which answers "may this platform build be published".
+Whether *both* platforms are present is trail compliance, and that is what the deployment gate
+will check at point 4. `mobileorders` does not use the `publish-gate` policy: that policy names
+the orders-api controls, so `kosli assert artifact` on flow-template compliance is the gate
+here.
+
+### Caveats
+
+- **Neither app compiles, and nothing checks that they do.** There is no Gradle build and no
+  Xcode project, so `androidx.appcompat` is an unresolved import and the iOS source is loose
+  Swift files rather than a buildable target. mobsfscan is pattern-based and does not care.
+- **The artifacts are zips of the source**, not an APK and an IPA. They exist so the
+  fingerprint-and-gate half of the pipeline is real from the start.
+- **`minSdkVersion=30` and the `<uses-sdk>` element are scanner-driven**, not app
+  requirements — mobsfscan raises error-level findings without them.
+- **There is no failing case yet.** The app is secure, so the gate always passes. Showing it
+  block needs a commit or PR that introduces a weakness.
+- **Nothing validates the jq rules automatically.** They were checked by hand with `jq`
+  against real `make scan` output, but a later edit's breakage is first seen in a workflow run.
+- iOS needed no tuning to pass — unlike the Android manifest, its 5 findings are all `note`.
+  `NSAppTransportSecurity` is left empty on purpose: ATS defaults are secure, and adding
+  `NSAllowsArbitraryLoads` is what would trip the scanner.
+- `com.kosli.mobileorders` becomes the Play Store application id if this is ever built for real.
+
 ## Deliberate simplifications
 
 **The SonarQube report is canned.** The reports under `sonar/` have the shape of SonarQube's
@@ -198,8 +313,9 @@ command is currently a beta feature, which is why this demo enforces the gate wi
 
 ## Next steps for the rest of the scenario
 
-- **Point 2 (mobile component):** a second flow, `mobile-app-ci`, with an Oversecured report
-  imported as a custom attestation type — same pattern as the Sonar import here.
+- **Mobile builds:** `make apk` — a real Android build in a container, so the APK replaces
+  the zip; then `make ipa` on a macOS runner, since Xcode cannot be containerised and so,
+  unlike `scan` and `apk`, it will not run on Linux.
 - **Point 3 (integration tests):** a third flow whose trail references both artifacts by
   fingerprint, attesting the combined integration test run as `junit`.
 - **Point 4 (deployment gate):** enable `REPORT_AZURE_ENV`, run the Bootstrap workflow with
@@ -216,3 +332,6 @@ mvn spring-boot:run                                           # http://localhost
 curl -s localhost:8080/api/price -H 'content-type: application/json' \
   -d '{"quantity":12,"tier":"GOLD","expedited":false}'
 ```
+
+For the mobile component, see [Local use](#local-use) — `make scan` and `make package`, both
+in Docker.
