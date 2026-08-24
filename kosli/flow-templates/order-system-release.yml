@@ -18,18 +18,13 @@ trail:
   attestations:
     - name: integration-tests
       type: custom:integration-test
-    # Who pressed "Approve" on the protected environment the release gate waits on. Read
-    # back from the run's approvals API and attested by the gate job itself, so the trail
-    # records the human decision alongside the machine ones.
+    # Who pressed "Approve" on the environment the release gate waits on.
     - name: release-approval
       type: custom:approval-github-workflow
   artifacts:
-    # Rebuilt from the tagged commit by the release workflow. Each component was already
-    # gated in its own flow; here they are the contents of the release.
+    # Rebuilt from the tagged commit by the release workflow.
     - name: orders-api
-    # The mobile apps are re-scanned as part of the release, so the SARIF is bound to the
-    # zip that ships rather than to the one the component pipeline built. The requirement is
-    # per-artifact, not per-trail: the scan describes one app.
+    # Per-artifact, not per-trail: the scan describes one app.
     - name: mobileorders-android
       attestations:
         - name: mobile-sast

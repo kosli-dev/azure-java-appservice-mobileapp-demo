@@ -55,9 +55,7 @@ kosli create attestation-type mobile-sast \
   --jq '.runs[0].tool.driver.name == "mobsfscan"'
 
 echo "==> integration-test attestation type"
-# The control: the integration run across the components has to have executed and to have
-# come out clean. `errors` counts harness failures - a run that fell over tells you nothing
-# about the release, so it is not a pass either.
+# `errors` counts harness failures - a run that fell over is not a pass either.
 kosli create attestation-type integration-test \
   --description "Integration test run across the components of a release: the run must have executed and reported no failures and no errors." \
   --schema kosli/attestation-types/integration-test.schema.json \
@@ -72,9 +70,8 @@ kosli create attestation-type integration-test \
   --summary "Errors=.errors"
 
 echo "==> approval-github-workflow attestation type"
-# Who pressed "Approve" on a job waiting on a protected environment, read back from the
-# run's approvals API. github.actor is the person who triggered the run - for a tagged
-# release, whoever pushed the tag - so the approver has to come from the API.
+# One entry from a run's approvals API, as .github/actions/get-github-workflow-approver
+# writes it.
 kosli create attestation-type approval-github-workflow \
   --description "Approval of a GitHub Actions job waiting on a protected environment: who approved it, for which environment." \
   --schema kosli/attestation-types/approval-github-workflow.schema.json \

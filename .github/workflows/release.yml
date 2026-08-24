@@ -6,14 +6,8 @@ name: Release
 #   2. run "Report integration test result" for that tag, choosing pass or fail
 #   3. approve the release-gate job ("continue") -> Kosli decides whether it may go out
 #
-# Once the gate opens, the release is published and then deployed to Azure App Service. A
-# tagged release that cleared the gate is the only route to the server: the CI pipeline on
-# main builds, attests and gates the component, but it does not deploy.
-#
-# Step 3 is deliberately not the decision. The approval only releases the job to run; what
-# the job then does is ask Kosli, and Kosli says no unless the integration test run has been
-# reported to this release trail and judged compliant. A human can start the gate; a human
-# cannot talk it into passing.
+# Step 3 is not the decision: the approval only lets the gate job run, and the job asks
+# Kosli. A human can start the gate; a human cannot talk it into passing.
 
 on:
   push:
@@ -96,9 +90,8 @@ jobs:
               --name "mobileorders-${platform}"
           done
 
-      # The release re-scans the source it just packaged rather than trusting the component
-      # pipeline's scan, so the SARIF is bound to the fingerprints that actually ship.
-      # mobsfscan runs in Docker, which ubuntu-latest has.
+      # Re-scanned rather than inheriting the component pipeline's SARIF, which describes a
+      # different fingerprint: these zips are release rebuilds.
       - name: Scan the mobile apps
         run: |
           make scan PLATFORM=android
@@ -145,9 +138,8 @@ jobs:
     name: May this release go out?
     runs-on: ubuntu-latest
     needs: release-build
-    # Protected environment: the job waits here until someone approves it in
-    # "Review deployments". Add required reviewers to the environment in the repository
-    # settings, or the job runs straight through and there is nothing to halt.
+    # Without required reviewers on this environment the job does not wait, and there is
+    # no approval to attest below.
     environment: production-release
     # actions: read is for the approvals API, which is how the approver is identified.
     permissions:
@@ -161,16 +153,13 @@ jobs:
         with:
           version: "2"
 
-      # github.actor is whoever pushed the tag, not whoever approved this job, so the
-      # approver is read back from the run's approvals API.
       - name: Who approved this release?
         id: approver
         uses: ./.github/actions/get-github-workflow-approver
         with:
           environment-name: production-release
 
-      # Attested before the assert below, because the flow template requires it: the
-      # release trail has to record who let it through.
+      # Before the assert below: the flow template requires this attestation.
       - name: Attest the approval
         run: |
           kosli attest custom \
@@ -180,9 +169,8 @@ jobs:
             --attachments "${{ steps.approver.outputs.approval-json-file }}"
           echo "Approved by ${{ steps.approver.outputs.approver }}" >> "$GITHUB_STEP_SUMMARY"
 
-      # kosli/policies/release-gate.yml, created by the "Bootstrap Kosli" workflow. It
-      # requires the trail to be compliant, and order-system-release.yml requires the
-      # integration test run - so a missing or failing integration test blocks here.
+      # The policy is kosli/policies/release-gate.yml, created by the "Bootstrap Kosli"
+      # workflow. A missing or failing integration test blocks here.
       - name: Assert the release-gate policy
         run: |
           kosli assert artifact \
@@ -214,9 +202,7 @@ jobs:
           ==========================================================================
           EOF
 
-  # The release is published before it is deployed: the published release is the immutable
-  # record of what was approved, and deploying is what consumes it. That is also what makes
-  # re-deploying or rolling back to v0.0.1 later a normal operation.
+  # The published release is the record of what was approved; deploying consumes it.
   publish-release:
     name: Publish the GitHub release
     runs-on: ubuntu-latest
