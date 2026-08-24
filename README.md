@@ -418,6 +418,16 @@ as a Rego policy and evaluated with `kosli evaluate trail --policy publish-gate.
 command is currently a beta feature, which is why this demo enforces the gate with
 `kosli assert artifact` instead.
 
+**`deploy/.kosli_ignore` excludes `logs/`, `*.log` and `*.html`.** `kosli snapshot azure`
+fingerprints a zip-deployed web app by unzipping the package and hashing its content exactly
+like `kosli fingerprint -t dir` — but Azure/Kudu writes its own files into wwwroot alongside
+whatever was deployed (application logs, a default landing page), which would otherwise make
+that fingerprint never match the one CI attested for the same jar. `.kosli_ignore` is read by
+the same digest code on both sides (shipped in kosli-cli v2.10.16, see
+`kosli-dev/server#2270`), so it has to be a real file tracked in `deploy/`, not something the
+workflow generates — that's why `.gitignore` uses `deploy/*` plus a `!deploy/.kosli_ignore`
+negation rather than ignoring `deploy/` outright.
+
 ## Next steps for the rest of the scenario
 
 - **Mobile builds:** `make apk` — a real Android build in a container, so the APK replaces
