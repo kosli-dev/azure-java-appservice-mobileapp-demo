@@ -1,13 +1,8 @@
 name: Get GitHub Workflow approver
 description: Read back who approved a job waiting on a protected environment.
 
-# Who pressed "Approve" on a job waiting on a protected environment.
-#
-# GitHub records that in the run's approvals API, not in any context variable - github.actor
-# is whoever triggered the run, which for a tag-triggered release is the person who pushed
-# the tag, not the person who approved it. So the approval has to be read back from the API.
-#
-# Ported from kosli-dev/github-release-example. Requires a token with `actions: read`.
+# The approver is only in the run's approvals API - github.actor is whoever triggered the
+# run, which for a tagged release is whoever pushed the tag. Needs `actions: read`.
 
 inputs:
   environment-name:

@@ -205,6 +205,13 @@ has no `attestations:` list, unlike `publish-gate.yml`: that list matches attest
 flow template is what carries the control set. Do not "fix" the asymmetry by copying the list
 across.
 
+**The mobile apps are re-scanned during the release, not just repackaged.** The release
+rebuilds the zips, so the component pipeline's SARIF describes a different fingerprint;
+inheriting it would mean the release shipped an artifact nothing had scanned. `make scan` runs
+in the release job and `mobile-sast` is required per mobile artifact in
+`order-system-release.yml`, so the scan is a release control, not a formality. Cost is ~30s of
+mobsfscan per platform in the release build.
+
 **The release rebuilds all three artifacts rather than referencing the CI fingerprints.**
 Looking them up would mean `kosli list artifacts` plus JSON wrangling for three components,
 and the release trail would have no provenance of its own. Rebuilding costs one `mvn verify`

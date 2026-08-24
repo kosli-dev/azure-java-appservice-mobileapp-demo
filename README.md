@@ -14,7 +14,7 @@ human can start the gate but only Kosli can open it.
 
 | Process | What it is | Flow |
 | --- | --- | --- |
-| Release | a tag builds the release, an integration test run is reported to it, a policy decides whether it goes out, and only then is it deployed | `order-system-release` |
+| Release | a tag builds and re-scans the release, an integration test run is reported to it, a policy decides whether it goes out, and only then is it deployed | `order-system-release` |
 
 Between them they cover points 1, 2 and 3 of the customer's demo scenario.
 
@@ -331,7 +331,7 @@ reported and judged clean.
 
 | Step | What you do | What happens |
 | --- | --- | --- |
-| 1 | `git tag v0.0.1 && git push origin v0.0.1` | The **Release** workflow rebuilds the backend and both mobile packages from the tagged commit, attests all three to the release trail, and stops at the `release-gate` job, which is waiting on the protected `production-release` environment. |
+| 1 | `git tag v0.0.1 && git push origin v0.0.1` | The **Release** workflow rebuilds the backend and both mobile packages from the tagged commit, re-runs the mobsfscan security scan on each mobile app, attests all of it to the release trail, and stops at the `release-gate` job, which is waiting on the protected `production-release` environment. |
 | 2 | Run **Report integration test result** with tag `v0.0.1` and result `pass` or `fail` | One of the two canned runs under `integration-tests/` is attested to the trail as `integration-tests`. The workflow always succeeds — it reports facts. Kosli evaluates them. |
 | 3 | Approve `release-gate` in *Review deployments* | The job records **who approved it** to the trail, then runs `kosli assert artifact --policy release-gate`. If the integration test run was never reported, or was reported as failing, the gate fails and nothing is published or deployed. |
 | — | nothing | Once the gate opens: the GitHub release is published, and then the exact JAR the gate approved is deployed to App Service and smoke-tested. |
@@ -381,14 +381,20 @@ server.
 
 ```
 orders-api            deploy/app.jar, fingerprinted as a directory
-mobileorders-android  build/mobileorders-android.zip
-mobileorders-ios      build/mobileorders-ios.zip
+mobileorders-android  build/mobileorders-android.zip  + mobile-sast scan
+mobileorders-ios      build/mobileorders-ios.zip      + mobile-sast scan
 ```
 
 Each is rebuilt from the tagged commit rather than pulled from the CI runs, so the release
 trail has provenance of its own for everything it contains. That also means the fingerprints
 are those of the release build; they are not guaranteed to equal the ones from the component
 pipelines.
+
+The mobile apps are **re-scanned** as part of the release rather than inheriting the scan from
+the `mobileorders` pipeline, so the SARIF is bound to the zip that actually ships. The release
+flow template requires it per artifact, so an error-level finding in either app fails trail
+compliance and the release gate blocks — the same rule as the component pipeline, applied to
+the release build.
 
 ### Where the release control lives
 

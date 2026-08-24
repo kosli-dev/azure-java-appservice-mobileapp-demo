@@ -3,8 +3,9 @@
 # Kosli flow template for a release of the whole order system.
 #
 # A release trail is named after the git tag (v0.0.1), and is compliant only once all three
-# components have been attested to it, the integration test run across them has been reported
-# and judged compliant, and a named human has approved the release.
+# components have been attested to it, both mobile apps have been scanned clean, the
+# integration test run across them has been reported and judged compliant, and a named human
+# has approved the release.
 #
 # Both trail-level attestations are about the release rather than any one binary: the
 # integration test exercises the combination of the components, and the approval is a
@@ -17,14 +18,18 @@ trail:
   attestations:
     - name: integration-tests
       type: custom:integration-test
-    # Who pressed "Approve" on the protected environment the release gate waits on. Read
-    # back from the run's approvals API and attested by the gate job itself, so the trail
-    # records the human decision alongside the machine ones.
+    # Who pressed "Approve" on the environment the release gate waits on.
     - name: release-approval
       type: custom:approval-github-workflow
   artifacts:
-    # Rebuilt from the tagged commit by the release workflow. Each component was already
-    # gated in its own flow; here they are the contents of the release.
+    # Rebuilt from the tagged commit by the release workflow.
     - name: orders-api
+    # Per-artifact, not per-trail: the scan describes one app.
     - name: mobileorders-android
+      attestations:
+        - name: mobile-sast
+          type: custom:mobile-sast
     - name: mobileorders-ios
+      attestations:
+        - name: mobile-sast
+          type: custom:mobile-sast

@@ -13,12 +13,9 @@
 # the authority: the integration test run has to have been reported to the release trail, and
 # judged compliant by the jq rules on the `integration-test` type, or this fails.
 #
-# No `attestations:` list here, unlike publish-gate.yml. That list matches attestations on the
-# *artifact*, and both release controls - `integration-tests` and `release-approval` - are
-# attested at *trail* level, since they are about the release rather than one binary.
-# `trail-compliance` is what carries them: order-system-release.yml requires all three
-# components plus both controls, so requiring the trail to be compliant requires exactly the
-# release control set.
+# No `attestations:` list, unlike publish-gate.yml: that list matches attestations on the
+# artifact, and both release controls are attested at trail level. `trail-compliance` is what
+# requires them.
 _schema: https://docs.kosli.com/schemas/policy/v1
 
 artifacts:
