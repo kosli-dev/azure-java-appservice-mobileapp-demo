@@ -40,4 +40,4 @@ jobs:
             --azure-tenant-id "${{ secrets.AZURE_TENANT_ID }}" \
             --azure-subscription-id "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
             --azure-resource-group-name "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --digests-source logs
+            --digests-source logs --debug

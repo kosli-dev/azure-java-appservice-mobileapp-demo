@@ -71,6 +71,7 @@ jobs:
       - name: Attest the backend
         id: backend
         run: |
+          kosli fingerprint deploy --artifact-type dir --debug
           FINGERPRINT="$(kosli fingerprint deploy --artifact-type dir)"
           echo "fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
           kosli attest artifact deploy \
