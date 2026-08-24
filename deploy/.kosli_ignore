@@ -3,7 +3,7 @@
 # the deployed package and fingerprints its content the same way. Without this, the two
 # fingerprints diverge: Azure/Kudu writes its own files into wwwroot (application logs, the
 # default hostingstart.html-style landing page) that were never part of what CI built and
-# attested. See kosli-dev/server#2270, shipped in kosli-cli v2.10.16.
+# attested.
 logs/
 *.log
 *.html
