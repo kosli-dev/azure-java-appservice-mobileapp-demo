@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://docs.kosli.com/schemas/flow-template/v1.json
+#
+# Kosli flow template for a release of the whole order system.
+#
+# A release trail is named after the git tag (v0.0.1), and is compliant only once all
+# three components have been attested to it AND the integration test run across them has
+# been reported and judged compliant.
+#
+# The integration test attestation sits at trail level, not on an artifact: it tests the
+# combination of the components, not any one of them.
+#
+# Applied by CI with:
+#   kosli create flow order-system-release --template-file kosli/flow-templates/order-system-release.yml
+version: 1
+trail:
+  attestations:
+    - name: integration-tests
+      type: custom:integration-test
+  artifacts:
+    # Rebuilt from the tagged commit by the release workflow. Each component was already
+    # gated in its own flow; here they are the contents of the release.
+    - name: orders-api
+    - name: mobileorders-android
+    - name: mobileorders-ios

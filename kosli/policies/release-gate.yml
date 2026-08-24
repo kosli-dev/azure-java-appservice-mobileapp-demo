@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://docs.kosli.com/schemas/policy/v1.json
+#
+# "May this release go out?"
+#
+# Created/updated with:
+#   kosli create policy release-gate kosli/policies/release-gate.yml --type env \
+#     --description "Controls a release of the order system must satisfy"
+#
+# Enforced in CI with:
+#   kosli assert artifact --fingerprint "$FINGERPRINT" --policy release-gate --flow order-system-release
+#
+# It runs *after* the manual approval on the release workflow, so pressing "continue" is not
+# the authority: the integration test run has to have been reported to the release trail, and
+# judged compliant by the jq rules on the `integration-test` type, or this fails.
+#
+# No `attestations:` list here, unlike publish-gate.yml. That list matches attestations on the
+# *artifact*, and `integration-tests` is attested at *trail* level - it is about the
+# combination of the components, not one binary. `trail-compliance` is what carries it:
+# order-system-release.yml requires all three components plus the integration test run, so
+# requiring the trail to be compliant requires exactly the release control set.
+_schema: https://docs.kosli.com/schemas/policy/v1
+
+artifacts:
+  # The release contents must be binaries Kosli saw being built, by a pipeline, from a
+  # known commit.
+  provenance:
+    required: true
+
+  # Everything order-system-release.yml asks for: all three components attested to the
+  # trail, and the integration test run reported and compliant.
+  trail-compliance:
+    required: true

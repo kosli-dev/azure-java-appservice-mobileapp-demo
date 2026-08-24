@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # One-time (idempotent) setup of the org-level Kosli objects this demo needs:
-#   * four custom attestation types, each carrying the jq rules that DECIDE compliance
+#   * five custom attestation types, each carrying the jq rules that DECIDE compliance
 #   * the publish-gate policy that `kosli assert artifact` enforces in CI
+#   * the release-gate policy the release workflow enforces after the manual approval
 #
 # Re-running it creates a new version of anything whose content changed, so it is safe to
 # run again after editing a schema, a rule or the policy.
@@ -65,13 +66,37 @@ kosli create attestation-type mobile-sast \
   --jq '.version == "2.1.0"' \
   --jq '.runs[0].tool.driver.name == "mobsfscan"'
 
+echo "==> integration-test attestation type"
+# The control: the integration run across the components has to have executed and to have
+# come out clean. `errors` counts harness failures - a run that fell over tells you nothing
+# about the release, so it is not a pass either.
+kosli create attestation-type integration-test \
+  --description "Integration test run across the components of a release: the run must have executed and reported no failures and no errors." \
+  --schema kosli/attestation-types/integration-test.schema.json \
+  --jq '.total > 0' \
+  --jq '.failed == 0' \
+  --jq '.errors == 0' \
+  --summary "Suite=.suite" \
+  --summary "Release=.release" \
+  --summary "Total=.total" \
+  --summary "Passed=.passed" \
+  --summary "Failed=.failed" \
+  --summary "Errors=.errors"
+
 echo "==> publish-gate policy"
 kosli create policy publish-gate kosli/policies/publish-gate.yml \
   --type env \
   --description "Controls a component must satisfy before it may be published" \
   --comment "bootstrap from $(git rev-parse --short HEAD 2>/dev/null || echo local)"
 
+echo "==> release-gate policy"
+kosli create policy release-gate kosli/policies/release-gate.yml \
+  --type env \
+  --description "Controls a release of the order system must satisfy before it goes out" \
+  --comment "bootstrap from $(git rev-parse --short HEAD 2>/dev/null || echo local)"
+
 echo
 echo "Done. Verify with:"
 echo "  kosli list attestation-types"
 echo "  kosli get policy publish-gate"
+echo "  kosli get policy release-gate"
