@@ -19,9 +19,9 @@ trail:
           type: custom:peer-review
         - name: unit-tests
           type: junit
-        # SonarQube quality gate, imported from the Sonar report.
+        # SonarQube quality gate, attested straight from SonarCloud via its Kosli webhook.
         - name: sonar-quality-gate
-          type: custom:sonarqube-quality-gate
+          type: sonar
         # Mutation testing (PIT). Fails below threshold in this demo - that is what the
         # waiver step is for.
         - name: mutation-tests

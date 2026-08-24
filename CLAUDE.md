@@ -79,6 +79,15 @@ Not verified, and the first live run is the test of it:
   and the README says so.
 - `actions/upload-artifact@v7` + `actions/download-artifact@v7`. Matched majors on purpose;
   upload's latest is v7 while download's is v8, so v7/v7 is the coherent pair.
+- The SonarCloud webhook path, end to end: whether `SonarSource/sonarqube-scan-action@v5`
+  passes `-Dsonar.analysis.kosli_*` args through to the scanner unmodified, whether the
+  webhook actually fires with enough payload for Kosli to resolve `orders-api-ci`'s trail and
+  the `orders-api` artifact by fingerprint, and whether `sonar-project.properties`'
+  `kosli-dev` / `kosli-dev_azure-java-appservice-demo` org/project-key guesses are the real
+  ones (fix them there if not — nothing else hardcodes them). Also whether SonarCloud's
+  Automatic Analysis is off for the project; left on, it fights the CI-driven analysis for the
+  same commit and won't carry the `kosli_*` properties. None of this has been dry-run in any
+  way, unlike almost everything else in this file — a webhook can't be dry-run locally.
 
 ## Design decisions worth not re-litigating
 
@@ -120,10 +129,18 @@ with `reason` and `new_compliance_status` — there is no `kosli waive` command.
 `attestation_name` field rejects dots (`^[a-zA-Z0-9\-_,]+$`), so the artifact is identified
 separately via `target_artifacts` + `artifact_fingerprint`. See `scripts/waive_attestation.sh`.
 
-**The Sonar report is canned**, at the customer's request, in the shape of SonarQube's
-`api/qualitygates/project_status` response. `kosli attest sonar` needs a live Sonar server —
-switching to it later means changing the flow template and policy from
-`custom:sonarqube-quality-gate` to the built-in `sonar` type, and swapping one pipeline step.
+**The Sonar quality gate is attested by SonarCloud itself, via webhook — not by CI calling
+`kosli attest`.** Kosli's Sonar integration (org-level, enabled once in the Kosli app) gives a
+webhook URL/secret that goes on the SonarCloud project; the scan then attests straight to
+Kosli when analysis finishes, using `sonar.analysis.kosli_flow` / `kosli_trail` /
+`kosli_attestation` / `kosli_git_commit` / `kosli_artifact_fingerprint` scanner properties set
+in `.github/workflows/ci-cd.yml` to address the right trail and artifact. The alternative was
+`kosli attest sonar --sonar-api-token ... --sonar-working-dir .scannerwork` (CLI polls the
+Sonar API after the scan); webhook was chosen because it needed no Sonar API token stored
+alongside `KOSLI_API_TOKEN`, and it is the integration path Kosli's own docs lead with. Either
+way the flow template and policies use the built-in `sonar` attestation type, not a custom
+one — `custom:sonarqube-quality-gate` (and its schema, its bootstrap block, and the canned
+`sonar/quality-gate-{pass,fail}.json` fixtures) were removed rather than kept alongside it.
 
 **One mobile flow, two artifacts, not two flows.** `mobileorders-android` and `mobileorders-ios`
 are artifacts of the same flow, so a trail is compliant only once both have been attested. Two
@@ -234,11 +251,13 @@ installed.
 Secret `KOSLI_PUBLIC_API_TOKEN` (the workflows map it onto `KOSLI_API_TOKEN` in the job env,
 since that's the only env var name the Kosli CLI itself recognizes for `--api-token`); then
 run the **Bootstrap Kosli** workflow (re-run it after this change: it now also creates the
-`integration-test` type and the `release-gate` policy). Add required reviewers to the
-`production-release` GitHub environment, or the release never halts. Azure:
-`infra/deploy.sh` then `infra/setup-github-oidc.sh`, which prints the three `AZURE_*` secrets;
-set vars `AZURE_WEBAPP_NAME` and `AZURE_RESOURCE_GROUP`. Optional vars `MUTATION_THRESHOLD`,
-`SONAR_RESULT`, `KOSLI_DRY_RUN`, `REPORT_AZURE_ENV` tune the demo without code changes —
+`integration-test` type and the `release-gate` policy). Enable the Sonar integration in the
+Kosli app (org-level) and put its webhook URL/secret on the SonarCloud project; secret
+`SONAR_TOKEN` for the scan step, and turn off SonarCloud's Automatic Analysis for the project.
+Add required reviewers to the `production-release` GitHub environment, or the release never
+halts. Azure: `infra/deploy.sh` then `infra/setup-github-oidc.sh`, which prints the three
+`AZURE_*` secrets; set vars `AZURE_WEBAPP_NAME` and `AZURE_RESOURCE_GROUP`. Optional vars
+`MUTATION_THRESHOLD`, `KOSLI_DRY_RUN`, `REPORT_AZURE_ENV` tune the demo without code changes —
 `MUTATION_THRESHOLD=70` gives a clean run with no waiver needed.
 
 ## Still to build (point 4 of the customer scenario)

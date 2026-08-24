@@ -23,6 +23,6 @@ artifacts:
     - name: unit-tests
       type: junit
     - name: sonar-quality-gate
-      type: custom:sonarqube-quality-gate
+      type: sonar
     - name: mutation-tests
       type: custom:mutation-testing
