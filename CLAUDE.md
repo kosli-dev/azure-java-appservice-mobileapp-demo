@@ -16,7 +16,9 @@ A Kosli demo built for a customer evaluation. It covers **points 1, 2 and 3** of
 - **Point 3** — a release process. A `v*` tag builds both components as one release, an
   integration test run is reported to the release trail by a separate manual workflow
   (pass or fail, from canned JSON), and a protected GitHub environment halts the release
-  until someone approves — after which Kosli, not the approver, decides.
+  until someone approves — after which Kosli, not the approver, decides. Only once the gate
+  opens is the release published and deployed to App Service. **`ci-cd.yml` no longer
+  deploys**: a tagged, gated release is the only route to the server.
 
 Kosli org: `kosli-public` for all three.
 
@@ -143,6 +145,20 @@ is the gate there. A shared policy would mean either a mobile-specific policy or
 **`mobile-sast` has jq rules but no JSON Schema**, unlike the three orders-api types. Nothing
 principled — SARIF's schema is large and the jq rules already pin `version` and the tool name.
 
+**Deploy is the last step of the release, and it comes after the GitHub release is
+published.** The published release is the immutable record of what the gate approved;
+deploying consumes it, which is what makes re-deploying or rolling back to a tag an ordinary
+operation. The deploy job downloads the artifact the gate approved rather than rebuilding, so
+the fingerprint that reaches App Service is the one Kosli judged. A failed deploy therefore
+leaves a published release and prod on the old version — the environment snapshot, not the
+GitHub release, is what says what is running.
+
+**The deploy job was removed from `ci-cd.yml`** (customer's call, 2026-08-24). It built,
+attested and gated on every push to main *and* deployed; now it stops at the gate. The demo
+story is "nothing reaches production except through the release gate", and two routes to the
+same App Service would have contradicted it. `id-token: write` went with it, since the Azure
+OIDC login was its only user.
+
 **The release gate runs after the approval, not before it.** The `release-gate` job sits on
 the protected `production-release` environment, so approving it only lets the job *start*;
 the job then runs `kosli assert artifact --policy release-gate`. That ordering is the whole
@@ -194,6 +210,9 @@ installed.
 - **`KOSLI_DRY_RUN=true` makes the release gate pass no matter what** — `kosli assert` exits 0
   in dry-run mode. Same for the publish gate. Fine for rehearsing the pipeline, useless for
   rehearsing the gate.
+- **The release deploy job uses the `production` environment, the gate uses
+  `production-release`.** Two environments on purpose: the halt belongs to the gate, and
+  `production` carries the deployment URL that shows up in the Actions UI.
 - **The release trail is named after the tag**, not the SHA, because the manually-run
   integration test workflow has to be able to address it. Re-tagging the same name is
   therefore re-using a trail.
