@@ -1,0 +1,72 @@
+name: Get GitHub Workflow approver
+description: Read back who approved a job waiting on a protected environment.
+
+# Who pressed "Approve" on a job waiting on a protected environment.
+#
+# GitHub records that in the run's approvals API, not in any context variable - github.actor
+# is whoever triggered the run, which for a tag-triggered release is the person who pushed
+# the tag, not the person who approved it. So the approval has to be read back from the API.
+#
+# Ported from kosli-dev/github-release-example. Requires a token with `actions: read`.
+
+inputs:
+  environment-name:
+    description: "Environment the approval is for (e.g. 'production-release')"
+    required: true
+  gh-token:
+    description: "GitHub token (defaults to GITHUB_TOKEN)"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  approver:
+    description: "GitHub login of the approver"
+    value: ${{ steps.get-approver.outputs.approver }}
+  approval-json-file:
+    description: "The approval entry, as JSON, ready to attest"
+    value: ${{ steps.get-approver.outputs.approval-json-file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Get the approval from the approvals API
+      id: get-approver
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+        ENVIRONMENT_NAME: ${{ inputs.environment-name }}
+        API_URL: "${{ github.api_url }}/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/approvals"
+      run: |
+        set -euo pipefail
+
+        echo "Fetching approvals for run ${{ github.run_id }}..."
+        curl -fsS \
+          -H "Authorization: Bearer ${GH_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          "${API_URL}" > approvals.json
+        jq . approvals.json
+
+        # The API returns every approval on the run; take the one for this environment.
+        APPROVAL_ENTRY="$(jq --arg env "${ENVIRONMENT_NAME}" \
+          'map(select(.environments[]?.name == $env)) | first' approvals.json)"
+
+        if [[ -z "$APPROVAL_ENTRY" || "$APPROVAL_ENTRY" == "null" ]]; then
+          echo "No approval found for environment: ${ENVIRONMENT_NAME}" >&2
+          echo "The environment has no required reviewers, so nothing was approved." >&2
+          exit 1
+        fi
+
+        echo "$APPROVAL_ENTRY" > approver.json
+        jq . approver.json
+
+        APPROVER="$(jq -r '.user.login' approver.json)"
+        if [[ -z "$APPROVER" || "$APPROVER" == "null" ]]; then
+          echo "Could not extract the approver from the approval data" >&2
+          exit 1
+        fi
+
+        echo "Approver: $APPROVER"
+        {
+          echo "approver=$APPROVER"
+          echo "approval-json-file=approver.json"
+        } >> "$GITHUB_OUTPUT"

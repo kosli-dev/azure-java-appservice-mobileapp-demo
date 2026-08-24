@@ -60,6 +60,7 @@ scripts/waive_attestation.sh       records a waiver (override) with a reason
 .github/workflows/ci-cd.yml        orders-api: build → attest → publish gate
 .github/workflows/mobileorders.yml  mobileorders: package → scan → attest → publish gate
 .github/workflows/release.yml      a tag: build → approval → release gate → publish → deploy
+.github/actions/get-github-workflow-approver/  reads back who approved a waiting job
 .github/workflows/report-integration-test-result.yml  report a run to a release trail
 .github/workflows/pr.yml           fast checks on the pull request
 .github/workflows/kosli-bootstrap.yml   run the bootstrap script from the Actions tab
@@ -79,6 +80,7 @@ Nothing in this repo decides pass or fail. The scripts collect facts; Kosli eval
 | `unit-tests` | built-in `junit` attestation type |
 | `mobile-sast` | no `error`-level SARIF finding, and the report really is SARIF 2.1.0 from mobsfscan — see [the rule](#the-compliance-rule) |
 | `integration-tests` | `.total > 0`, `.failed == 0` and `.errors == 0` — a run that fell over is not a pass either |
+| `release-approval` | `.state == "approved"` and `.user.login != ""` — a named human approved the release |
 
 Those rules live on the attestation types (see `scripts/bootstrap_kosli.sh`), so they apply
 to every component that uses the type — change the rule once, every pipeline is judged by
@@ -98,7 +100,7 @@ Repository secret:
 Then run the **Bootstrap Kosli** workflow from the Actions tab (or `./scripts/bootstrap_kosli.sh`
 locally with `KOSLI_ORG` and `KOSLI_API_TOKEN` set — the Kosli CLI only recognizes the token
 from an env var named `KOSLI_API_TOKEN`, so the workflows map the `KOSLI_PUBLIC_API_TOKEN`
-secret onto it). It creates the five custom attestation types and the `publish-gate` and `release-gate`
+secret onto it). It creates the six custom attestation types and the `publish-gate` and `release-gate`
 policies.
 
 > The attestation types are org-level objects. If `kosli-public` already has a type with one
@@ -309,7 +311,7 @@ reported and judged clean.
 | --- | --- | --- |
 | 1 | `git tag v0.0.1 && git push origin v0.0.1` | The **Release** workflow rebuilds the backend and both mobile packages from the tagged commit, attests all three to the release trail, and stops at the `release-gate` job, which is waiting on the protected `production-release` environment. |
 | 2 | Run **Report integration test result** with tag `v0.0.1` and result `pass` or `fail` | One of the two canned runs under `integration-tests/` is attested to the trail as `integration-tests`. The workflow always succeeds — it reports facts. Kosli evaluates them. |
-| 3 | Approve `release-gate` in *Review deployments* | The job runs `kosli assert artifact --policy release-gate`. If the run was never reported, or was reported as failing, the gate fails and nothing is published or deployed. |
+| 3 | Approve `release-gate` in *Review deployments* | The job records **who approved it** to the trail, then runs `kosli assert artifact --policy release-gate`. If the integration test run was never reported, or was reported as failing, the gate fails and nothing is published or deployed. |
 | — | nothing | Once the gate opens: the GitHub release is published, and then the exact JAR the gate approved is deployed to App Service and smoke-tested. |
 
 The point of step 3 is that pressing continue is **not** the decision. The approval only lets
@@ -325,6 +327,18 @@ show:
 Reporting again adds another attestation to the trail rather than replacing it, and Kosli
 judges the latest — so after a blocked release you re-report as `pass` and re-run the
 `release-gate` job, with both reports left on the trail as evidence.
+
+### Who pressed continue
+
+`github.actor` is whoever pushed the tag, not whoever approved the release, so the approver
+is read back from the run's approvals API by
+[`.github/actions/get-github-workflow-approver`](.github/actions/get-github-workflow-approver)
+and attested to the trail as `release-approval`. The flow template requires it, so a release
+trail carries the name of the person who let it through next to the machine controls — and
+`kosli attest`, not the Actions log, is where that lives.
+
+The gate job attests the approval *before* asserting the policy, since the policy requires
+the trail to be compliant and the template requires the approval.
 
 ### Publish, then deploy
 

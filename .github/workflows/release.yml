@@ -130,6 +130,10 @@ jobs:
     # "Review deployments". Add required reviewers to the environment in the repository
     # settings, or the job runs straight through and there is nothing to halt.
     environment: production-release
+    # actions: read is for the approvals API, which is how the approver is identified.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v5
 
@@ -137,6 +141,25 @@ jobs:
         uses: kosli-dev/setup-cli-action@v5
         with:
           version: "2"
+
+      # github.actor is whoever pushed the tag, not whoever approved this job, so the
+      # approver is read back from the run's approvals API.
+      - name: Who approved this release?
+        id: approver
+        uses: ./.github/actions/get-github-workflow-approver
+        with:
+          environment-name: production-release
+
+      # Attested before the assert below, because the flow template requires it: the
+      # release trail has to record who let it through.
+      - name: Attest the approval
+        run: |
+          kosli attest custom \
+            --name release-approval \
+            --type approval-github-workflow \
+            --attestation-data "${{ steps.approver.outputs.approval-json-file }}" \
+            --attachments "${{ steps.approver.outputs.approval-json-file }}"
+          echo "Approved by ${{ steps.approver.outputs.approver }}" >> "$GITHUB_STEP_SUMMARY"
 
       # kosli/policies/release-gate.yml, created by the "Bootstrap Kosli" workflow. It
       # requires the trail to be compliant, and order-system-release.yml requires the
@@ -159,7 +182,8 @@ jobs:
           Policy: kosli/policies/release-gate.yml
 
           The usual cause in this demo is the integration test run: either it was never
-          reported to this trail, or it was reported as a failing run.
+          reported to this trail, or it was reported as a failing run. The approval itself
+          was recorded a step earlier, as ${{ steps.approver.outputs.approver }}.
 
           Run the "Report integration test result" workflow with:
 
