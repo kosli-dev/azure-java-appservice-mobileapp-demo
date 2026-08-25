@@ -37,7 +37,7 @@ Between them they cover points 1, 2 and 3 of the customer's demo scenario.
 | Evaluate the pull request for a peer review | `pull_request` attestation for the raw evidence, plus a `peer-review` custom attestation whose jq rules require two distinct approvers **or** one approver who wrote none of the code | [`scripts/peer_review_attestation.py`](scripts/peer_review_attestation.py), [`scripts/bootstrap_kosli.sh`](scripts/bootstrap_kosli.sh) |
 | Evaluate a SonarQube quality gate | A real SonarCloud scan runs in CI; SonarCloud attests the quality-gate result straight to the trail via Kosli's built-in `sonar` attestation type, over the webhook configured on the Sonar project | [`sonar-project.properties`](sonar-project.properties), [`.github/workflows/ci-build.yml`](.github/workflows/ci-build.yml) |
 | Create a waiver for mutation testing | PIT results are attested with the threshold they are judged against. The score is below threshold on purpose, so the gate blocks — then the failure is waived with a recorded reason | [`scripts/waive_attestation.sh`](scripts/waive_attestation.sh), [`.github/workflows/waive-attestation.yml`](.github/workflows/waive-attestation.yml) |
-| Check if this component may be published, and show how the policy is created | `kosli assert artifact --policy publish-gate` in its own pipeline job, against a policy created from a YAML file in this repo | [`kosli/policies/publish-gate.yml`](kosli/policies/publish-gate.yml), [`.github/workflows/ci-build.yml`](.github/workflows/ci-build.yml) |
+| Check if this component may be published, and show how the policy is created | `kosli assert artifact` in its own pipeline job, against the flow template; the release gate then asserts a policy created from a YAML file in this repo | [`kosli/flow-templates/order-system-ci.yml`](kosli/flow-templates/order-system-ci.yml), [`kosli/policies/release-gate.yml`](kosli/policies/release-gate.yml) |
 
 Clearing the publish gate is not what puts the service on App Service: the deploy happens at
 the end of the pipeline, after the release gate (see
@@ -49,7 +49,8 @@ the end of the pipeline, after the release gate (see
 ```
 kosli/flow-templates/order-system-ci.yml  the system's definition of "done"
 kosli/attestation-types/*.json     JSON Schemas for the custom attestation types
-kosli/policies/publish-gate.yml    "may this component be published?"
+kosli/policies/publish-gate.yml    the same controls as a policy (unused: the publish gate
+                                   asserts the flow template)
 kosli/policies/release-gate.yml    "may this release go out?"
 kosli/policies/prod-deploy-gate.yml  groundwork for the deployment gate (point 4)
 
@@ -200,7 +201,7 @@ threshold, with the surviving mutants listed in the attestation.
 **3. The publish gate blocks.**
 
 ```
-kosli assert artifact --fingerprint <sha256> --policy publish-gate
+kosli assert artifact --fingerprint <sha256> --flow order-system-ci
 ```
 
 fails, the component may not be published, and the job log prints how to unblock. This is the
@@ -308,9 +309,8 @@ the scan is a property of the app, not of the build.
 
 Both platforms are artifacts of the **same** trail as the backend, so a commit is compliant
 only when both have been packaged, scanned and found clean. There is no separate mobile gate:
-the `publish-gate` policy names the backend's controls, and whether the mobile apps are
-present and clean is trail compliance — which is exactly what the release gate asserts at the
-end of the pipeline.
+whether the mobile apps are present and clean is trail compliance, which the release gate
+asserts at the end of the pipeline.
 
 ### Caveats
 
@@ -387,22 +387,23 @@ mobile artifacts exist to be gated, until there are real builds and a store to p
 
 ### The two gates
 
-| Gate | Judges | Runs |
-| --- | --- | --- |
-| `publish-gate` | the backend's own controls: peer review, unit tests, Sonar, mutation testing | right after the build, before anything human happens |
-| `release-gate` | the whole trail: both gates' controls, both mobile scans, the integration test run, the approval | after the approval, as the last thing before the deploy |
+| Gate | Judges | Against | Runs |
+| --- | --- | --- | --- |
+| publish gate | the backend's own controls: peer review, unit tests, Sonar, mutation testing | the flow template | right after the build, before anything human happens |
+| release gate | the whole trail, plus the integration test run and the approval | `release-gate` policy | after the approval, as the last thing before the deploy |
 
-**The flow template only lists what the build itself produces.** It is the yardstick the
-publish gate uses, and that gate runs minutes before the integration test result and the
-approval exist — so a template that required them would make the component non-compliant at
-publish time, every time. `integration-tests` and `release-approval` therefore live in
-[`release-gate.yml`](kosli/policies/release-gate.yml), which is what turns them into a gate,
-and in [`prod-deploy-gate.yml`](kosli/policies/prod-deploy-gate.yml), which judges what is
-actually running by the same bar.
+**No policy is involved in the publish gate.** `kosli assert artifact` with neither
+`--policy` nor `--environment` asserts the artifact against its flow template, and the
+template lists exactly what the build itself produces. Policies are the release gate's
+business.
 
-So `publish-gate` requires the backend's four controls and no `trail-compliance`, while
-`release-gate` requires `trail-compliance` — everything the build owed — **plus** the two
-release controls by name.
+That split is what makes the two gates work at different moments. The publish gate runs
+minutes before the integration test result and the approval exist, so a template requiring
+them would make the component non-compliant every time. `integration-tests` and
+`release-approval` therefore live in [`release-gate.yml`](kosli/policies/release-gate.yml),
+which is what turns them into a gate, and in
+[`prod-deploy-gate.yml`](kosli/policies/prod-deploy-gate.yml), which judges what is actually
+running by the same bar.
 
 Both release controls are attested against the `orders-api` fingerprint rather than the trail,
 because a policy's `attestations:` rules match attestations on the artifact being asserted.
@@ -415,14 +416,14 @@ with `kosli get artifact order-system-ci:<sha>`.
 on; the threshold is enforced by Kosli, which is the point — the control and the waiver live
 in one place, not in a build file that any developer can edit.
 
-**The publish gate is an `env`-type policy.** Kosli policies are asserted against an
-artifact directly (`--policy publish-gate`), an environment, or a flow template. The same
-policy file can later be attached to the Azure environment as a deployment gate — see
-`kosli/policies/prod-deploy-gate.yml`.
+**The release gate is an `env`-type policy asserted against an artifact.** Kosli policies are
+asserted against an artifact directly (`--policy release-gate`), or attached to an environment
+and asserted against what is running there — which is how `kosli/policies/prod-deploy-gate.yml`
+carries the same controls into production.
 
 **Rego is an option, not a requirement.** Rules that the policy YAML cannot express (for
 example "the approver must not be the author, unless the change is docs-only") can be written
-as a Rego policy and evaluated with `kosli evaluate trail --policy publish-gate.rego`. That
+as a Rego policy and evaluated with `kosli evaluate trail --policy release-gate.rego`. That
 command is currently a beta feature, which is why this demo enforces the gate with
 `kosli assert artifact` instead.
 
