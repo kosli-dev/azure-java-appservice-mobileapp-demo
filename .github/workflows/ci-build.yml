@@ -186,7 +186,7 @@ jobs:
             --fingerprint "$KOSLI_FINGERPRINT" \
             --control peer-review \
             --compliant="$COMPLIANT" \
-            --attachments pull-request.json
+            --attachments pull-request.json \
             --attachments kosli/policies/peer-review.rego
 
       - name: Attest the unit tests
@@ -288,7 +288,7 @@ jobs:
 
   # ------------------------------------------------------------------------- 5. Publish gate
   publish-gate:
-    name: Can the system be released to staging?
+    name: Can release to staging?
     runs-on: ubuntu-latest
     needs: backend
     steps:
@@ -311,7 +311,7 @@ jobs:
       - name: Explain how to unblock
         if: failure()
         run: |
-          cat <<EOF
+          MESSAGE=$(cat <<EOF
           ==========================================================================
           The publish gate blocked this component.
 
@@ -329,10 +329,13 @@ jobs:
           simply not have landed yet.
           ==========================================================================
           EOF
+          )
+          echo "$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
 
   # ------------------------------------------------------------------------- 6. Release gate
   release-gate:
-    name: Can the system be released to Production?
+    name: Can release to Production?
     runs-on: ubuntu-latest
     needs: [backend, mobile, publish-gate]
     # Without required reviewers on this environment the job does not wait, and there is
@@ -381,7 +384,7 @@ jobs:
       - name: Explain how to unblock
         if: failure()
         run: |
-          cat <<EOF
+          MESSAGE=$(cat <<EOF
           ==========================================================================
           The release gate blocked ${KOSLI_TRAIL}.
 
@@ -401,6 +404,9 @@ jobs:
           Kosli judges the latest one.
           ==========================================================================
           EOF
+          )
+          echo "$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     name: Deploy to Azure App Service
