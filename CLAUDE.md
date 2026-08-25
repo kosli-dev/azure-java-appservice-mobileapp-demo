@@ -65,13 +65,12 @@ command dry-runs clean on **v2.38.0** (including `bootstrap_kosli.sh` end to end
 
 Not verified, and the first live run is the test of it:
 
-- Whether the `artifacts.attestations[].name` entries in `publish-gate.yml` match on the
-  short template name (`peer-review`) rather than the dotted CLI form
-  (`orders-api.peer-review`). Evidence says short — `kosli attest junit --help` documents
+- Whether the `artifacts.attestations[].name` entries in a policy match on the short template
+  name (`peer-review`) rather than the dotted CLI form (`orders-api.peer-review`). Evidence
+  says short — `kosli attest junit --help` documents
   `--name yourTemplateArtifactName.yourAttestationName`, i.e. the dotted form is addressing,
-  not the stored name. This is now load-bearing: `publish-gate.yml` has no
-  `trail-compliance` any more (it runs before the release controls exist), so that list is the
-  entire policy. If it mismatches, the publish gate fails for the wrong reason on every run.
+  not the stored name. It matters for `release-gate.yml`'s two release controls, which are
+  attested with plain names against the artifact's fingerprint.
 - Whether the custom attestation type names collide with existing types in `kosli-public`.
   Run `kosli list attestation-types` before the first bootstrap — re-running it would version
   an existing type rather than create a new one.
@@ -184,11 +183,15 @@ not possibly be there yet. So `integration-tests` and `release-approval` are nam
 `release-gate.yml` and `prod-deploy-gate.yml` instead. Putting them back in the template
 re-breaks the publish gate.
 
-**Two gates, and they are deliberately asymmetric.** `publish-gate` judges the backend's own
-controls and carries **no** `trail-compliance`. `release-gate` requires `trail-compliance` —
-which is now exactly "the build did everything it owed", including both mobile scans — plus
-the two release controls by name. There is no mobile-specific gate. Do not "tidy" either
-policy into looking like the other.
+**The publish gate asserts no policy** (customer's call, 2026-08-25). `kosli assert artifact`
+with neither `--policy` nor `--environment` judges the artifact against its flow template,
+which is the question that gate asks: did the build produce everything it owed? Policies
+belong to the release gate. `kosli/policies/publish-gate.yml` is therefore unused - kept, and
+still created by the bootstrap, only because it documents the same control set as a policy.
+
+**`release-gate` requires `trail-compliance`** - which is now exactly "the build did
+everything it owed", including both mobile scans - **plus** the two release controls by name.
+There is no mobile-specific gate.
 
 **`mobile-sast` has jq rules but no JSON Schema**, unlike the three orders-api types. Nothing
 principled — SARIF's schema is large and the jq rules already pin `version` and the tool name.
