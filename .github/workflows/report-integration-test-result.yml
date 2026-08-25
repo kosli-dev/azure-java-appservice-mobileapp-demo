@@ -57,9 +57,26 @@ jobs:
             "integration-tests/result-${VARIANT}.json" > integration-test.json
           jq . integration-test.json
 
+      # The run is attested against the orders-api artifact rather than the trail, so the
+      # release-gate policy matches it. Its fingerprint is whatever the build for this commit
+      # produced.
+      - name: Find the orders-api artifact
+        id: artifact
+        run: |
+          FINGERPRINT="$(kosli get artifact "${KOSLI_FLOW}:${KOSLI_TRAIL}" --output json \
+            | jq -r '(if type == "array" then . else [.] end)
+                     | map(select(.name == "orders-api")) | .[0].fingerprint // empty')"
+          if [ -z "$FINGERPRINT" ]; then
+            echo "no orders-api artifact on ${KOSLI_FLOW}:${KOSLI_TRAIL} - has the build run?" >&2
+            exit 1
+          fi
+          echo "orders-api-fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
+          echo "orders-api: $FINGERPRINT"
+
       - name: Attest the run
         run: |
           kosli attest custom \
+            --fingerprint "${{ steps.artifact.outputs.orders-api-fingerprint }}" \
             --name integration-tests \
             --type integration-test \
             --attestation-data integration-test.json \

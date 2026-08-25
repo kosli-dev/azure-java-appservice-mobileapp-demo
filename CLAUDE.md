@@ -75,12 +75,14 @@ Not verified, and the first live run is the test of it:
 - Whether the custom attestation type names collide with existing types in `kosli-public`.
   Run `kosli list attestation-types` before the first bootstrap — re-running it would version
   an existing type rather than create a new one.
-- Whether `kosli assert artifact --policy release-gate` really fails when the *trail-level*
-  `integration-tests` attestation is missing or non-compliant. The policy leans entirely on
-  `trail-compliance: required: true` for that (see the decision below), so if artifact
-  compliance turns out not to include trail compliance, the gate passes when it should not —
-  which is the one failure mode that would be invisible in the demo. Check the first blocked
-  release actually blocks.
+- Whether `kosli assert artifact --policy release-gate` really fails when `integration-tests`
+  is missing or non-compliant. Both release controls are now artifact-bound and named in the
+  policy, which should make it a straightforward match — but a gate that passes when it should
+  block is the one failure mode invisible in the demo. Check the first blocked release blocks.
+- The JSON shape `kosli get artifact <flow>:<sha> --output json` returns. The integration test
+  workflow filters it with `map(select(.name == "orders-api")) | .[0].fingerprint`, guessing
+  `name` and `fingerprint` as the field names. It fails loudly if the filter finds nothing, so
+  the failure mode is a clear error rather than a wrong attestation.
 - `actions/upload-artifact@v7` + `actions/download-artifact@v7`. Matched majors on purpose;
   upload's latest is v7 while download's is v8, so v7/v7 is the coherent pair.
 - The SonarCloud webhook path, end to end: whether `SonarSource/sonarqube-scan-action@v5`
@@ -174,13 +176,19 @@ still scanning. `publish-gate` needs only `backend`, since it judges the backend
 the spec default of `warning`. mobsfscan omits it often, so `.level == "error"` alone silently
 ignores those findings. The rule in `scripts/bootstrap_kosli.sh` walks the fallback chain.
 
+**The flow template lists only what the build produces; post-build controls live in policies**
+(customer's call, 2026-08-25). The template is also the yardstick `kosli assert artifact` uses
+at the publish gate, which runs minutes before the integration test result and the approval
+exist — with them in the template, the publish gate failed every run on controls that could
+not possibly be there yet. So `integration-tests` and `release-approval` are named in
+`release-gate.yml` and `prod-deploy-gate.yml` instead. Putting them back in the template
+re-breaks the publish gate.
+
 **Two gates, and they are deliberately asymmetric.** `publish-gate` judges the backend's own
-controls and carries **no** `trail-compliance`, because it runs mid-pipeline, before the
-integration test run and the approval exist — requiring the whole trail there would block every
-run. `release-gate` is the mirror image: no `attestations:` list, because
-`trail-compliance: required: true` already requires every control in `order-system-ci.yml`,
-including both mobile scans. There is no mobile-specific gate: the mobile apps are covered by
-trail compliance at the release gate. Do not "tidy" either policy into looking like the other.
+controls and carries **no** `trail-compliance`. `release-gate` requires `trail-compliance` —
+which is now exactly "the build did everything it owed", including both mobile scans — plus
+the two release controls by name. There is no mobile-specific gate. Do not "tidy" either
+policy into looking like the other.
 
 **`mobile-sast` has jq rules but no JSON Schema**, unlike the three orders-api types. Nothing
 principled — SARIF's schema is large and the jq rules already pin `version` and the tool name.
@@ -204,9 +212,8 @@ environment and attests it against an artifact fingerprint — here it is trail-
 `integration-tests`, because the approval is about the release rather than one binary.
 The job needs `permissions: actions: read` for that API.
 
-**The approval is attested before the policy assert, in the same job.** The flow template
-requires `release-approval`, and the policy requires the trail to be compliant, so the order
-matters. It also means the action fails the job outright if the environment has no required
+**The approval is attested before the policy assert, in the same job.** `release-gate.yml`
+requires `release-approval`, so the order matters. It also means the action fails the job outright if the environment has no required
 reviewers: there is no approval entry to read, which is the correct outcome — an unprotected
 environment cannot produce evidence of a human decision.
 
@@ -216,9 +223,14 @@ the job then runs `kosli assert artifact --policy release-gate`. That ordering i
 point of point 3 — a human can start the gate, a human cannot talk it into passing. Putting
 the assert in the build job instead would make the approval the decision.
 
-**`integration-tests` and `release-approval` are trail-level attestations.** They are about
-the release — the combination of the components, and the decision to ship them — not about any
-one binary, so they hang off the trail.
+**`integration-tests` and `release-approval` are attested against the `orders-api`
+fingerprint, not the trail.** Conceptually they are about the release rather than one binary,
+and they were trail-level until the controls moved into the policies. A policy's
+`attestations:` rules match attestations on the artifact being asserted, and the docs do not
+say whether a trail-level attestation counts — betting on it would fail both gates for a
+reason that reads like a missing test. The release-gate job has the fingerprint from
+`needs.backend.outputs.orders-api-fingerprint`; the integration test workflow looks it up with
+`kosli get artifact order-system-ci:<sha> --output json`.
 
 **Everything is built once, in one job.** The backend JAR and both mobile zips come from the
 same checkout, are fingerprinted there, and every attestation binds to those fingerprints. No

@@ -331,10 +331,12 @@ jobs:
         with:
           environment-name: production-release
 
-      # Before the assert below: the flow template requires this attestation.
+      # Bound to the artifact, not the trail: release-gate.yml matches it as an attestation
+      # on the artifact it is asserting.
       - name: Attest the approval
         run: |
           kosli attest custom \
+            --fingerprint "${{ needs.backend.outputs.orders-api-fingerprint }}" \
             --name release-approval \
             --type approval-github-workflow \
             --attestation-data "${{ steps.approver.outputs.approval-json-file }}" \
