@@ -78,10 +78,11 @@ Not verified, and the first live run is the test of it:
   is missing or non-compliant. Both release controls are now artifact-bound and named in the
   policy, which should make it a straightforward match — but a gate that passes when it should
   block is the one failure mode invisible in the demo. Check the first blocked release blocks.
-- The JSON shape `kosli get artifact <flow>:<sha> --output json` returns. The integration test
-  workflow filters it with `map(select(.name == "orders-api")) | .[0].fingerprint`, guessing
-  `name` and `fingerprint` as the field names. It fails loudly if the filter finds nothing, so
-  the failure mode is a clear error rather than a wrong attestation.
+- `kosli get artifact <flow>:<sha> --output json` returns an array, latest first, one entry
+  per build of that commit; the artifact's template name is in `template_reference_name`, not
+  `name` (`filename` is the path that was fingerprinted, e.g. `deploy`). The integration test
+  workflow filters on it. Verified against the live API - `kosli-public` is a public org, so
+  read-only CLI calls against it work with any token value.
 - `actions/upload-artifact@v7` + `actions/download-artifact@v7`. Matched majors on purpose;
   upload's latest is v7 while download's is v8, so v7/v7 is the coherent pair.
 - The SonarCloud webhook path, end to end: whether `SonarSource/sonarqube-scan-action@v5`
