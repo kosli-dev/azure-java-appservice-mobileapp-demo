@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       create_environment:
-        description: "Also create the Azure environment and attach the deploy-gate policy"
+        description: "Also create the Azure environments and attach the deploy-gate policy to production"
         type: boolean
         default: true
 
@@ -36,14 +36,21 @@ jobs:
       - name: Create attestation types and the publish-gate policy
         run: ./scripts/bootstrap_kosli.sh
 
-      - name: Create the Azure environment and attach the deploy gate
+      # One Kosli environment per Azure resource group, since that is the granularity
+      # `kosli snapshot azure` reports at. Only production carries the deploy gate: staging
+      # is where a build goes to be tested, so a policy blocking it would defeat the point.
+      - name: Create the Azure environments and attach the deploy gate
         if: ${{ inputs.create_environment }}
         env:
           KOSLI_ENVIRONMENT: ${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }}
+          KOSLI_ENVIRONMENT_STAGING: ${{ vars.KOSLI_ENVIRONMENT_STAGING || 'azure-appservice-staging' }}
         run: |
           kosli create environment "$KOSLI_ENVIRONMENT" \
             --type azure-apps \
-            --description "Azure App Service running orders-api"
+            --description "Azure App Service running orders-api in production"
+          kosli create environment "$KOSLI_ENVIRONMENT_STAGING" \
+            --type azure-apps \
+            --description "Azure App Service running orders-api in staging"
           kosli create policy prod-deploy-gate kosli/policies/prod-deploy-gate.yml \
             --type env \
             --description "Controls an artifact must satisfy to run in production"

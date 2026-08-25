@@ -26,6 +26,17 @@ jobs:
   snapshot:
     if: ${{ vars.REPORT_AZURE_ENV == 'true' }}
     runs-on: ubuntu-latest
+    # `kosli snapshot azure` snapshots a whole resource group and cannot filter by app, which
+    # is why each environment has its own resource group - one leg, one Kosli environment.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kosli-environment: ${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }}
+            resource-group: ${{ vars.AZURE_RESOURCE_GROUP }}
+          - kosli-environment: ${{ vars.KOSLI_ENVIRONMENT_STAGING || 'azure-appservice-staging' }}
+            resource-group: ${{ vars.AZURE_RESOURCE_GROUP_STAGING }}
+    name: Snapshot ${{ matrix.kosli-environment }}
     steps:
       - name: Setup Kosli CLI
         uses: kosli-dev/setup-cli-action@v5
@@ -34,10 +45,10 @@ jobs:
 
       - name: Snapshot the App Service environment
         run: |
-          kosli snapshot azure "${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }}" \
+          kosli snapshot azure "${{ matrix.kosli-environment }}" \
             --azure-client-id "${{ secrets.AZURE_CLIENT_ID }}" \
             --azure-client-secret "${{ secrets.AZURE_CLIENT_SECRET }}" \
             --azure-tenant-id "${{ secrets.AZURE_TENANT_ID }}" \
             --azure-subscription-id "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            --azure-resource-group-name "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --azure-resource-group-name "${{ matrix.resource-group }}" \
             --digests-source logs --debug

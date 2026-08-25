@@ -41,7 +41,12 @@ for group in "$RESOURCE_GROUP" "$RESOURCE_GROUP_STAGING"; do
 done
 
 echo "==> federated credentials for ${GITHUB_REPO}"
-for subject in "repo:${GITHUB_REPO}:ref:refs/heads/main" "repo:${GITHUB_REPO}:environment:production"; do
+# One subject per environment a job deploys from: a job with `environment:` gets an
+# environment-scoped subject, not the branch one, so a missing entry fails azure/login.
+for subject in \
+  "repo:${GITHUB_REPO}:ref:refs/heads/main" \
+  "repo:${GITHUB_REPO}:environment:production" \
+  "repo:${GITHUB_REPO}:environment:staging"; do
   name="gha-$(echo "$subject" | tr ':/' '--' | tr -cd '[:alnum:]-' | cut -c1-110)"
   az ad app federated-credential create --id "$CLIENT_ID" --parameters "{
     \"name\": \"${name}\",
