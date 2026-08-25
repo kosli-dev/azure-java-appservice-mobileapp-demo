@@ -50,8 +50,21 @@ to them any more.
 
 ## State
 
-Pushed and verified as landed. **Not yet run live** — that needs the `KOSLI_PUBLIC_API_TOKEN` secret
-and the Azure setup. Nothing in here has talked to app.kosli.com yet.
+Pushed and landed. **Has now run live once** (2026-08-25, `ci-build.yml` run 32834236540, on
+the `orders-api.peer-review` → `get attestation` change): `backend` failed at "Evaluate and
+record the peer review control decision" with `[kosli evaluate input flow=order-system-ci]
+failed to parse input: EOF`. Root cause was one step earlier - `kosli get attestation
+pull-request --flow ... --trail ...` failed with `only one of --trail, --fingerprint is
+allowed when using ATTESTATION-NAME`, so `pull-request.json` came out empty and `evaluate
+input` choked on the empty file. `KOSLI_FINGERPRINT` (a job-level env var set by the earlier
+"Attest the backend" step, for later attestations on that artifact) is auto-bound by the CLI
+to any command's `--fingerprint` flag purely from the env, whether or not that command's
+invocation passes it - so `get attestation`, which never mentions `--fingerprint`, still got
+one from the environment and collided with `--trail`. Fixed by clearing
+`KOSLI_FINGERPRINT: ""` in that one step's `env:` (confirmed empty-string clears it, tested
+against `kosli-public` directly - unset and empty-string behave the same; a real, non-empty
+value is what triggers the conflict). See the matching Gotcha below. Not yet re-run to confirm
+the fix goes green; that is the next live run to check.
 
 Verified before pushing:
 
@@ -408,6 +421,15 @@ that line: it is why the mobile half needs no toolchain installed.
   the step fails outright — this now breaks rehearsing the *build*, where before it didn't:
   the old script hit the GitHub API directly and never touched Kosli until the final
   (harmless, dry-run-safe) `evaluate input`/`attest decision` calls.
+- **A `KOSLI_*` env var configures every Kosli command that has the matching flag, not just
+  the ones that meant to set it.** `KOSLI_FINGERPRINT`, set as a job-level env var in "Attest
+  the backend" so later steps can `--fingerprint "$KOSLI_FINGERPRINT"` the same artifact, got
+  picked up by `kosli get attestation` too even though that call never mentions
+  `--fingerprint` - `get attestation` treats `--trail` and `--fingerprint` as mutually
+  exclusive, so it failed with `only one of --trail, --fingerprint is allowed`. This broke a
+  real live run (see State, above). Fixed by clearing it for that one step:
+  `env: {KOSLI_FINGERPRINT: ""}`. Worth checking for on every new step that adds a `kosli`
+  command to a job that already exports a `KOSLI_*` variable for a different purpose.
 - **Re-running the release gate job re-attests the same approver.** The approvals API returns the
   run's approvals, and a re-run does not create a new one, so a blocked release that is
   re-reported and re-run records the original approval again. Fine here; worth knowing before

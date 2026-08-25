@@ -158,6 +158,11 @@ jobs:
       # needs to judge - who approved, who wrote the code - so there is no separate GitHub API
       # call here: just read that attestation back.
       - name: Fetch the pull request attestation
+        # KOSLI_FINGERPRINT (set above, for the artifact) and --trail are mutually exclusive
+        # on `get attestation` - the CLI binds --fingerprint from that env var even though
+        # this call never passes the flag itself, so it has to be cleared for this step.
+        env:
+          KOSLI_FINGERPRINT: ""
         run: |
           kosli get attestation pull-request \
             --flow "$KOSLI_FLOW" \
