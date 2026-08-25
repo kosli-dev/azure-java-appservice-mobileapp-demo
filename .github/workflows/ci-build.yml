@@ -273,14 +273,13 @@ jobs:
         with:
           version: "2"
 
-      # The policy is kosli/policies/publish-gate.yml, created by the "Bootstrap Kosli"
-      # workflow. It judges the backend's own controls only, so it can run before the
-      # integration test and the approval exist.
-      - name: Assert the publish-gate policy
+      # No --policy: with neither --policy nor --environment, the artifact is asserted
+      # against its flow template, which is everything the build owed. Policies are the
+      # release gate's business.
+      - name: Assert the flow template
         run: |
           kosli assert artifact \
             --fingerprint "${{ needs.backend.outputs.orders-api-fingerprint }}" \
-            --policy publish-gate \
             --flow "$KOSLI_FLOW"
 
       - name: Explain how to unblock
@@ -290,8 +289,8 @@ jobs:
           ==========================================================================
           The publish gate blocked this component.
 
-          Trail:  https://app.kosli.com/${KOSLI_ORG}/flows/${KOSLI_FLOW}/trails/${KOSLI_TRAIL}
-          Policy: kosli/policies/publish-gate.yml
+          Trail:    https://app.kosli.com/${KOSLI_ORG}/flows/${KOSLI_FLOW}/trails/${KOSLI_TRAIL}
+          Template: kosli/flow-templates/order-system-ci.yml
 
           Either fix the failing control, or waive it with a recorded reason:
 
