@@ -51,10 +51,10 @@ same Kosli environment.
 ```
 kosli/flow-templates/order-system-ci.yml  the system's definition of "done"
 kosli/attestation-types/*.json     JSON Schemas for the custom attestation types
-kosli/policies/publish-gate.yml    the same controls as a policy (unused: the publish gate
-                                   asserts the flow template)
 kosli/policies/release-gate.yml    "may this release go out?"
-kosli/policies/prod-deploy-gate.yml  groundwork for the deployment gate (point 4)
+kosli/policies/secure-development.yml   what an artifact must have gone through to run
+                                   anywhere - staging and production alike
+kosli/policies/production-readiness.yml  what production requires on top of that (point 4)
 
 src/                               Spring Boot service (a pricing endpoint)
 pom.xml                            Java 21, JUnit 5, JaCoCo, PIT mutation testing
@@ -115,8 +115,9 @@ Repository secret:
 Then run the **Bootstrap Kosli** workflow from the Actions tab (or `./scripts/bootstrap_kosli.sh`
 locally with `KOSLI_ORG` and `KOSLI_API_TOKEN` set — the Kosli CLI only recognizes the token
 from an env var named `KOSLI_API_TOKEN`, so the workflows map the `KOSLI_PUBLIC_API_TOKEN`
-secret onto it). It creates the four custom attestation types, the `peer-review` control, and
-the `publish-gate` and `release-gate` policies.
+secret onto it). It creates the four custom attestation types, the `peer-review` control, the
+`release-gate` policy, and - with *create environment* checked - the two Azure environments
+and their `secure-development` and `production-readiness` policies.
 
 > The attestation types are org-level objects. If `kosli-public` already has a type with one
 > of these names, run `kosli list attestation-types` first — re-running the bootstrap would
@@ -425,8 +426,21 @@ minutes before the integration test result and the approval exist, so a template
 them would make the component non-compliant every time. `integration-tests` and
 `release-approval` therefore live in [`release-gate.yml`](kosli/policies/release-gate.yml),
 which is what turns them into a gate, and in
-[`prod-deploy-gate.yml`](kosli/policies/prod-deploy-gate.yml), which judges what is actually
-running by the same bar.
+[`production-readiness.yml`](kosli/policies/production-readiness.yml), which judges what is
+actually running in production by the same bar.
+
+The environment policies are split along the same line, for the same reason. A build reaches
+staging minutes before the integration test result and the approval exist, so
+[`secure-development.yml`](kosli/policies/secure-development.yml) — provenance, trail
+compliance and the four build-time controls — is attached to **both** environments, and
+[`production-readiness.yml`](kosli/policies/production-readiness.yml) adds the two post-build
+controls to production only. Every policy attached to an environment has to pass, so
+production is judged by the union.
+
+The names are the domain each one governs, not the machinery that enforces it:
+`secure-development` is the control set a change has to clear to exist at all,
+`production-readiness` is what makes it fit for production. `release-gate` keeps its gate
+name because it really is one — it blocks a pipeline.
 
 Both release controls are attested against the `orders-api` fingerprint rather than the trail,
 because a policy's `attestations:` rules match attestations on the artifact being asserted.
@@ -448,8 +462,8 @@ in one place, not in a build file that any developer can edit.
 
 **The release gate is an `env`-type policy asserted against an artifact.** Kosli policies are
 asserted against an artifact directly (`--policy release-gate`), or attached to an environment
-and asserted against what is running there — which is how `kosli/policies/prod-deploy-gate.yml`
-carries the same controls into production.
+and asserted against what is running there — which is how `secure-development` and
+`production-readiness` carry the same controls into the environments.
 
 **Rego is an option, not a requirement.** Rules that the policy YAML cannot express (for
 example "the approver must not be the author, unless the change is docs-only") can be written
@@ -479,10 +493,10 @@ negation rather than ignoring `deploy/` outright.
   with a suite that actually drives the deployed backend from the mobile clients is a change
   to one workflow step — the attestation type, the flow template and the gate stay as they are.
 - **Point 4 (deployment gate):** enable `REPORT_AZURE_ENV`, run the Bootstrap workflow with
-  *create environment* checked, and the `prod-deploy-gate` policy starts judging whatever is
+  *create environment* checked, and the environment policies start judging whatever is
   actually running in App Service — including anything that never went through the pipeline.
-  Both `azure-appservice-prod` and `azure-appservice-staging` are snapshotted; only production
-  carries the policy, since staging is where a build goes to be tested.
+  Both `azure-appservice-prod` and `azure-appservice-staging` are snapshotted and carry
+  `secure-development`; production also carries `production-readiness`.
 
 ## Local development
 

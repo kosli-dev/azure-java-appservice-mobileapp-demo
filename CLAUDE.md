@@ -213,8 +213,8 @@ review is judged with `evaluate input` against a local JSON file rather than `ev
 against the org's copy of it. `kosli create control` and `kosli attest decision` are
 themselves beta and do hit the org, though, and `kosli-public` does not have Controls enabled
 yet — see State, above. Mirrors the "never alone" control in
-https://github.com/kosli-dev/control-actions, same as before. `publish-gate.yml` and
-`prod-deploy-gate.yml` were updated to name `peer-review-decision`/`decision` instead of
+https://github.com/kosli-dev/control-actions, same as before. The environment policies were
+updated to name `peer-review-decision`/`decision` instead of
 `peer-review`/`custom:peer-review`, matching what `release-gate.yml` already did; the now-unused
 `kosli/attestation-types/peer-review.schema.json` was deleted.
 
@@ -312,7 +312,7 @@ reporting `0`.
 at the publish gate, which runs minutes before the integration test result and the approval
 exist — with them in the template, the publish gate failed every run on controls that could
 not possibly be there yet. So `integration-tests` and `release-approval` are named in
-`release-gate.yml` and `prod-deploy-gate.yml` instead. Putting them back in the template
+`release-gate.yml` and `production-readiness.yml` instead. Putting them back in the template
 re-breaks the publish gate. `peer-review-decision` is the exception that proves the rule: it
 *is* in the template (customer's call, 2026-08-25), because unlike the other two it is
 produced in the `backend` job, at the same time as the evidence it judges — there is no
@@ -322,8 +322,12 @@ build-time control does.
 **The publish gate asserts no policy** (customer's call, 2026-08-25). `kosli assert artifact`
 with neither `--policy` nor `--environment` judges the artifact against its flow template,
 which is the question that gate asks: did the build produce everything it owed? Policies
-belong to the release gate. `kosli/policies/publish-gate.yml` is therefore unused - kept, and
-still created by the bootstrap, only because it documents the same control set as a policy.
+belong to the release gate. `kosli/policies/publish-gate.yml` was therefore unused; it was
+kept for a while as documentation of the same control set in policy form, then **deleted**
+(customer's call, 2026-08-25) along with its `create policy` call in `bootstrap_kosli.sh` -
+a file nothing reads is a file that goes stale. The `publish-gate` policy object still exists
+in `kosli-public`, attached to nothing; there is no `kosli delete policy`, so removing it
+needs the UI or the API.
 
 **`release-gate` requires `trail-compliance`** - which is now exactly "the build did
 everything it owed", including both mobile scans and the peer-review control decision -
@@ -345,9 +349,33 @@ publish-gate → staging → approval → release-gate → production. Staging i
 publish-gate alone: no `--policy`, no second assert. That is deliberate — publish-gate already
 asks "did the build produce everything it owed?", which is exactly the bar for reaching the
 place where the integration tests are supposed to run, and a policy that could block staging
-would block the very testing whose result the release gate then requires. The staging Kosli
-environment gets no attached policy for the same reason; `prod-deploy-gate` stays on
-production only.
+would block the very testing whose result the release gate then requires.
+
+**The environment policies are split along the same line as the gates** (customer's call,
+2026-08-25). `kosli/policies/secure-development.yml` — provenance, trail-compliance and the
+four build-time controls — is attached to *both* Azure environments;
+`kosli/policies/production-readiness.yml` keeps only `integration-tests` and
+`release-approval` and is attached to production alone. Every policy attached to an
+environment has to pass, so production is judged by the union of the two and nothing is
+duplicated between them: `production-readiness` deliberately omits `provenance` and
+`trail-compliance` (the schema defaults both to `required: false`) because
+`secure-development` already requires them everywhere. The reason for the split is the same
+timing that keeps `integration-tests` and `release-approval` out of the flow template: a build
+lands on staging minutes before either can exist, so the old single policy would have made
+staging permanently non-compliant if it were ever attached there. Before this, staging carried
+no policy at all, which meant nothing judged what was running on it. When the nginx exception
+arrives, it belongs in `secure-development.yml` — the common policy is where "what may run
+here at all" lives.
+
+**These two are named after the domain they govern, not the mechanism** (customer's call,
+2026-08-25). They were `deploy-gate` and `prod-deploy-gate` for about an hour, which was
+wrong twice over: "gate" is what `publish-gate` and `release-gate` do — block a pipeline —
+whereas these judge what is *already running*, continuously, and the `prod-` prefix said
+nothing about what actually differed between them. `secure-development` is the ISO 27001 A.14
+name for this control set (provenance, review, tests, static analysis);
+`production-readiness` covers both of its controls, where `production-approval` would have
+named only the human half and left the integration test run unaccounted for. Do not rename
+them back, and keep gate names for the two things that really are gates.
 
 **The integration test report auto-triggers after staging deploy, but stays a workflow_dispatch
 workflow too** (2026-08-25). `deploy-staging`'s last step calls `gh workflow run
@@ -568,9 +596,11 @@ prints the three `AZURE_*` secrets; set vars `AZURE_WEBAPP_NAME`, `AZURE_RESOURC
 - **A real integration suite** — the pipeline reports one of two canned runs under
   `integration-tests/`. A suite that actually drives the deployed backend from the mobile
   clients replaces one workflow step; the type, the template and the gate stay as they are.
-- **Point 4** — deployment gate: `kosli/policies/prod-deploy-gate.yml` exists but is not
-  attached. Both environments are snapshotted (the workflow is matrixed over the two
-  resource groups) but only production is meant to carry the policy.
-  Enable `REPORT_AZURE_ENV`, run the bootstrap with *create environment* checked,
-  and the policy starts judging what is actually running in App Service. Note `kosli snapshot
-  azure` needs a service-principal **client secret**, not the OIDC login the deploy job uses.
+- **Point 4** — deployment gate: mostly live now. Both environments are snapshotted (the
+  workflow is matrixed over the two resource groups), `secure-development` is attached to
+  both and `production-readiness` to production. What remains is the demo story around it: an
+  unrelated app running next to `orders-api` that the policy has to allow explicitly (an
+  nginx container is planned, exempted by `matches(artifact.name, ...)` in
+  `secure-development.yml`), and asserting a snapshot as a gate rather than only reporting it.
+  Note `kosli snapshot azure` needs a service-principal **client secret**, not the OIDC login
+  the deploy job uses.

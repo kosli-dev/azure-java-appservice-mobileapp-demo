@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://docs.kosli.com/schemas/policy/v1.json
+#
+# Production readiness: what production requires *on top of* secure-development.yml
+# (point 4 of the customer's scenario).
+#
+#   kosli create policy production-readiness kosli/policies/production-readiness.yml --type env
+#   kosli attach-policy production-readiness --environment azure-appservice-prod
+#
+# Only the two controls that arrive after the build: the integration test run across the
+# components, and the named human approval. Together with secure-development.yml - attached to
+# the same environment, and every attached policy has to pass - this is the release gate's
+# control set, so what runs in production is judged by the same bar the pipeline used to let
+# it out.
+#
+# `provenance` and `trail-compliance` are deliberately absent: the schema defaults them to
+# `required: false`, and secure-development.yml already requires both everywhere.
+_schema: https://docs.kosli.com/schemas/policy/v1
+
+artifacts:
+  attestations:
+    - name: integration-tests
+      type: custom:integration-test
+    - name: release-approval
+      type: custom:approval-github-workflow

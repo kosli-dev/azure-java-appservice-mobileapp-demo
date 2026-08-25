@@ -3,7 +3,7 @@
 # One-time (idempotent) setup of the org-level Kosli objects this demo needs:
 #   * four custom attestation types, each carrying the jq rules that DECIDE compliance directly
 #   * the peer-review control, judged by a Rego policy against local evidence rather than a type
-#   * the publish-gate policy that `kosli assert artifact` enforces in CI
+#   * the release-gate policy that `kosli assert artifact` enforces in CI
 #   * the release-gate policy the release workflow enforces after the manual approval
 #
 # Re-running it creates a new version of anything whose content changed, so it is safe to
@@ -95,12 +95,6 @@ kosli create attestation-type approval-github-workflow \
   --summary "Approved at=.environments[0].updated_at" \
   --summary "Comment=.comment"
 
-echo "==> publish-gate policy"
-kosli create policy publish-gate kosli/policies/publish-gate.yml \
-  --type env \
-  --description "Controls a component must satisfy before it may be published" \
-  --comment "bootstrap from $(git rev-parse --short HEAD 2>/dev/null || echo local)"
-
 echo "==> release-gate policy"
 kosli create policy release-gate kosli/policies/release-gate.yml \
   --type env \
@@ -111,5 +105,4 @@ echo
 echo "Done. Verify with:"
 echo "  kosli list attestation-types"
 echo "  kosli list controls"
-echo "  kosli get policy publish-gate"
 echo "  kosli get policy release-gate"
