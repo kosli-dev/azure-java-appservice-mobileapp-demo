@@ -45,9 +45,9 @@ trail:
     # Per-artifact, not per-trail: the scan describes one app.
     - name: mobileorders-android
       attestations:
-        - name: mobile-sast
-          type: custom:mobile-sast
+        - name: oversecured
+          type: custom:oversecured
     - name: mobileorders-ios
       attestations:
-        - name: mobile-sast
-          type: custom:mobile-sast
+        - name: oversecured
+          type: custom:oversecured

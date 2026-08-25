@@ -21,8 +21,8 @@ Everything lands on one Kosli flow, `order-system-ci`, whose trail is the commit
 | Artifact | What it is | Its controls |
 | --- | --- | --- |
 | `orders-api` | a Spring Boot service, deployed to Azure App Service | peer review, unit tests, SonarQube quality gate, mutation testing |
-| `mobileorders-android` | the Mobile Orders Android app, scanned from source | mobsfscan SAST |
-| `mobileorders-ios` | the Mobile Orders iOS app, scanned from source | mobsfscan SAST |
+| `mobileorders-android` | the Mobile Orders Android app | Oversecured scan |
+| `mobileorders-ios` | the Mobile Orders iOS app | Oversecured scan |
 
 plus two controls that arrive after the build — the integration test run across the
 components, and the human approval — which the release-gate policy requires rather than the
@@ -60,7 +60,8 @@ sonar-project.properties          SonarCloud project key, org, sources and JaCoC
 integration-tests/result-{pass,fail}.json  integration test runs to report to a trail
 infra/main.bicep                   Linux App Service plan + Java SE web app
 
-mobileorders/{android,ios}/        the mobile app source, scanned by mobsfscan
+mobileorders/{android,ios}/        the mobile app source
+oversecured/report-pass.json       the Oversecured scan report the mobile apps are judged on
 Makefile                           scan and package the mobile app (Docker, no toolchain)
 
 scripts/bootstrap_kosli.sh         creates the attestation types and the policy
@@ -87,7 +88,7 @@ Nothing in this repo decides pass or fail. The scripts collect facts; Kosli eval
 | `sonar-quality-gate` | Kosli's built-in `sonar` attestation type: the SonarQube quality gate must pass |
 | `mutation-tests` | `.total_mutations > 0` and `.mutation_score >= .threshold` |
 | `unit-tests` | built-in `junit` attestation type |
-| `mobile-sast` | no `error`-level SARIF finding, and the report really is SARIF 2.1.0 from mobsfscan — see [the rule](#the-compliance-rule) |
+| `oversecured` | the scan completed, and no `high` or `critical` finding — see [the rule](#the-compliance-rule) |
 | `integration-tests` | `.total > 0`, `.failed == 0` and `.errors == 0` — a run that fell over is not a pass either |
 | `release-approval` | `.state == "approved"` and `.user.login != ""` — a named human approved the release |
 
@@ -190,7 +191,7 @@ pass.
 trail for the commit and attests the pull request. Three jobs then run in parallel against
 that trail: `backend` builds the JAR, fingerprints the deployable and attests peer review,
 unit tests and mutation testing, and the two `mobile` legs package, scan and attest their app.
-The PIT HTML report and the two SARIF reports go to the Kosli Evidence Vault as attachments. The SonarCloud scan runs as its own step and attests the quality gate to the
+The PIT HTML report and the Oversecured report go to the Kosli Evidence Vault as attachments. The SonarCloud scan runs as its own step and attests the quality gate to the
 same trail itself, over the webhook, once analysis completes — there is no `kosli attest`
 call for it, so it can land moments after the job finishes rather than during it.
 
@@ -233,8 +234,9 @@ quality gate's conditions in SonarCloud.
 
 ## Point 2 — Mobile Orders (Android + iOS)
 
-**Mobile Orders** is scanned for mobile security issues, the scan is attested to Kosli, and
-Kosli decides whether the app may be published. Android and iOS, both scanned from source.
+**Mobile Orders** is scanned for mobile security issues by
+[Oversecured](https://oversecured.com/), the scan report is attested to Kosli, and Kosli
+decides whether the app may be published. Android and iOS.
 Nothing is built yet — see [Next steps](#next-steps-for-the-rest-of-the-scenario).
 
 Both apps are artifacts of the same trail as the backend, so a commit is releasable only once
@@ -244,22 +246,20 @@ both have been packaged, scanned and found clean.
 
 | Where | Owns |
 | --- | --- |
-| `Makefile` | anything that turns source into an artifact — scanning now, building later. No kosli, no API token. |
+| `Makefile` | anything that turns source into an artifact — zipping now, building later. No kosli, no API token. |
 | `.github/workflows/ci-build.yml` | everything that talks to Kosli — the trail, the attestations, the gates. |
 
-So the pipeline only ever runs in GitHub Actions. Locally you can scan and package; you
-cannot attest or gate.
+So the pipeline only ever runs in GitHub Actions. Locally you can package; you cannot attest
+or gate.
 
 ### Local use
 
-Docker, `make`, `git` and `zip`. **No JDK, Android SDK or kosli CLI** — the scanner runs in a
-container, and so will the Android build.
+`make`, `git` and `zip`. **No JDK, Android SDK or kosli CLI** — and Docker only once there is
+a real Android build to containerise.
 
 ```sh
 make                        # list targets
-make scan                   # -> build/mobsfscan-android.sarif
 make package                # -> build/mobileorders-android.zip
-make scan PLATFORM=ios      # -> build/mobsfscan-ios.sarif
 make package PLATFORM=ios   # -> build/mobileorders-ios.zip
 make clean
 ```
@@ -271,38 +271,38 @@ Every target is per-platform; `PLATFORM` defaults to `android`.
 | Step | Where | What the audience sees |
 | --- | --- | --- |
 | Build | `make package` | the app packaged into `build/` |
-| Scan | `make scan` | [mobsfscan](https://github.com/MobSF/mobsfscan) analyses the app and writes SARIF 2.1.0 |
+| Scan | [Oversecured](https://oversecured.com/) | done outside this pipeline; its report is `oversecured/report-pass.json` |
+| Report | `scripts/oversecured_attestation.py` | the report's header and one line per finding, as attestation data |
 | Attest | `kosli attest artifact` + `attest custom` | the app and its scan land in Kosli as a fingerprinted artifact plus an attestation |
-| Evaluate | Kosli | the `mobile-sast` rules run and mark the attestation compliant or not |
+| Evaluate | Kosli | the `oversecured` rules run and mark the attestation compliant or not |
 | Gate | `kosli assert artifact --policy release-gate` | exits 0 or non-zero, at the end of the pipeline: may this go out? |
 
-mobsfscan is mobile-specific SAST over Java, Kotlin, Android XML, `Info.plist`, Swift and
-Objective-C, with native SARIF output. It needs no account and analyses **source**, which is
-why this works before there is any build.
+The report is canned, at the customer's request — see
+[Deliberate simplifications](#deliberate-simplifications). Only its header is attested; the
+full 3.7 MB report is an attachment in the Evidence Vault, since the jq rules read nothing
+else.
 
 ### The compliance rule
 
-`scripts/bootstrap_kosli.sh` creates a custom attestation type, `mobile-sast`, with three jq
+`scripts/bootstrap_kosli.sh` creates a custom attestation type, `oversecured`, with three jq
 rules — all must return `true` for a scan to be compliant:
 
 | Rule | Why |
 | --- | --- |
-| no `error`-level results | the security bar; `warning` and `note` pass |
-| `.version == "2.1.0"` | rejects anything that is not SARIF 2.1.0 |
-| `.runs[0].tool.driver.name == "mobsfscan"` | stops an unrelated tool's clean report from satisfying a mobile-SAST requirement |
-
-The severity rule is more careful than it looks:
+| `.header.scan.status == "completed"` | a scan that did not finish says nothing about the app |
+| no `critical` or `high` in `.header.severityCounts` | the security bar; `medium` and `low` pass |
+| no `critical` or `high` among `.findings` | the header must agree with the findings it summarises |
 
 ```jq
-[.runs[] | .tool.driver.rules as $rules | .results[]
- | (.level // $rules[.ruleIndex].defaultConfiguration.level // "warning")]
-| any(. == "error") | not
+(.header.severityCounts.critical // 0) == 0 and (.header.severityCounts.high // 0) == 0
 ```
 
-SARIF's `level` is **optional on a result**: when absent the effective level comes from the
-rule's `defaultConfiguration`, and failing that the spec default of `warning`. mobsfscan
-omits it on a good number of results, so the obvious `.level == "error"` test silently
-ignores them.
+The `// 0` matters: Oversecured omits a severity from `severityCounts` entirely when its count
+is zero, rather than reporting it as `0`.
+
+The third rule exists because the attestation data is a projection: the script copies `header`
+verbatim and derives `findings` from the same report, so a header that disagrees with the
+findings it summarises cannot pass.
 
 The flow template requires the attestation on the **artifact** rather than the trail, because
 the scan is a property of the app, not of the build.
@@ -316,18 +316,19 @@ asserts at the end of the pipeline.
 
 - **Neither app compiles, and nothing checks that they do.** There is no Gradle build and no
   Xcode project, so `androidx.appcompat` is an unresolved import and the iOS source is loose
-  Swift files rather than a buildable target. mobsfscan is pattern-based and does not care.
+  Swift files rather than a buildable target.
 - **The artifacts are zips of the source**, not an APK and an IPA. They exist so the
   fingerprint-and-gate half of the pipeline is real from the start.
-- **`minSdkVersion=30` and the `<uses-sdk>` element are scanner-driven**, not app
-  requirements — mobsfscan raises error-level findings without them.
-- **There is no failing case yet.** The app is secure, so the gate always passes. Showing it
-  block needs a commit or PR that introduces a weakness.
-- **Nothing validates the jq rules automatically.** They were checked by hand with `jq`
-  against real `make scan` output, but a later edit's breakage is first seen in a workflow run.
-- iOS needed no tuning to pass — unlike the Android manifest, its 5 findings are all `note`.
-  `NSAppTransportSecurity` is left empty on purpose: ATS defaults are secure, and adding
-  `NSAllowsArbitraryLoads` is what would trip the scanner.
+- **The report does not describe these zips.** It is a real Oversecured scan of an Android APK
+  (`app.platform: "android"`, `scan.fileName: "file1.apk"`), and the same report is attested to
+  both mobile artifacts. Nothing scans this repo's mobile source.
+- **There is no failing case yet.** The committed report is the passing one, so the control
+  always passes. A `report-fail.json` with high-severity findings is the next step.
+- **Nothing validates the jq rules automatically.** All three were checked by hand with `jq`
+  against the committed report, but a later edit's breakage is first seen in a workflow run.
+- **`minSdkVersion=30`, the `<uses-sdk>` element and the empty `NSAppTransportSecurity` dict
+  are historical** — they were added to satisfy mobsfscan, which this demo no longer runs. They
+  are harmless, and correct for a real app.
 - `com.kosli.mobileorders` becomes the Play Store application id if this is ever built for real.
 
 ## Point 3 — the release process
@@ -377,8 +378,8 @@ The gate job attests the approval *before* asserting the policy, for the obvious
 
 ```
 orders-api            deploy/app.jar, fingerprinted as a directory
-mobileorders-android  build/mobileorders-android.zip  + mobile-sast scan
-mobileorders-ios      build/mobileorders-ios.zip      + mobile-sast scan
+mobileorders-android  build/mobileorders-android.zip  + Oversecured scan
+mobileorders-ios      build/mobileorders-ios.zip      + Oversecured scan
 ```
 
 The deploy job downloads the JAR the gates approved rather than rebuilding, so the fingerprint
@@ -412,6 +413,12 @@ with `kosli get artifact order-system-ci:<sha>`.
 
 ## Deliberate simplifications
 
+**The Oversecured report is canned**, at the customer's request. `oversecured/report-pass.json`
+is a real Oversecured scan, supplied by them, with its two high-severity findings removed so it
+is the passing case; the untouched original is the failing case, and goes in next. In a real
+pipeline the scan would run against the built APK/IPA and its report would be fetched from
+Oversecured's API — the attestation type, the rules and the gate would not change.
+
 **Mutation testing does not fail the Maven build.** PIT reports the score and Maven carries
 on; the threshold is enforced by Kosli, which is the point — the control and the waiver live
 in one place, not in a build file that any developer can edit.
@@ -439,9 +446,12 @@ negation rather than ignoring `deploy/` outright.
 
 ## Next steps for the rest of the scenario
 
+- **A failing Oversecured report:** `oversecured/report-fail.json`, the customer's original
+  report with its two high-severity findings intact, chosen by a workflow input the way the
+  integration test result is. That is what shows the control blocking.
 - **Mobile builds:** `make apk` — a real Android build in a container, so the APK replaces
   the zip; then `make ipa` on a macOS runner, since Xcode cannot be containerised and so,
-  unlike `scan` and `apk`, it will not run on Linux.
+  unlike `apk`, it will not run on Linux.
 - **A real integration suite:** the pipeline reports one of two canned runs. Replacing them
   with a suite that actually drives the deployed backend from the mobile clients is a change
   to one workflow step — the attestation type, the flow template and the gate stay as they are.
@@ -460,5 +470,4 @@ curl -s localhost:8080/api/price -H 'content-type: application/json' \
   -d '{"quantity":12,"tier":"GOLD","expedited":false}'
 ```
 
-For the mobile component, see [Local use](#local-use) — `make scan` and `make package`, both
-in Docker.
+For the mobile component, see [Local use](#local-use) — `make package`.

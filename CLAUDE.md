@@ -10,9 +10,10 @@ A Kosli demo built for a customer evaluation. It covers **points 1, 2 and 3** of
 - **Point 1** — a Java component deployed to Azure App Service whose peer review, SonarQube
   quality gate, unit tests and mutation testing are all attested to Kosli, and whose right to
   be published is decided by a Kosli policy rather than by a green pipeline.
-- **Point 2** — the Mobile Orders mobile component (Android + iOS), scanned from source with
-  mobsfscan, the SARIF report attested as a custom type whose jq rules are the gate. Merged in
-  from the `mobile-app-example` repo; it was developed there and its git history lives there.
+- **Point 2** — the Mobile Orders mobile component (Android + iOS), scanned by Oversecured,
+  the report attested as a custom type whose jq rules are the gate. Merged in from the
+  `mobile-app-example` repo; it was developed there and its git history lives there, where it
+  used mobsfscan.
 - **Point 3** — a release process. An integration test run is reported to the trail by a
   separate manual workflow (pass or fail, from canned JSON), and a protected GitHub
   environment halts the pipeline until someone approves — after which Kosli, not the
@@ -28,8 +29,8 @@ trail is the commit:
 | Artifact | Attestations |
 | --- | --- |
 | `orders-api` | `peer-review`, `peer-review-decision`, `unit-tests`, `sonar-quality-gate`, `mutation-tests` |
-| `mobileorders-android` | `mobile-sast` |
-| `mobileorders-ios` | `mobile-sast` |
+| `mobileorders-android` | `oversecured` |
+| `mobileorders-ios` | `oversecured` |
 | (trail level) | `pull-request`, `integration-tests`, `release-approval` |
 
 `orders-api.peer-review` is now evidence only (no compliance-deciding jq rules). The judgment
@@ -61,11 +62,11 @@ Verified before pushing:
   `kosli evaluate input` against it returns the expected verdict for all four cases: two
   approvers, one independent approver, one dependent approver, no pull request.
 
-For the mobile half, verified in the `mobile-app-example` repo before the merge: mobsfscan
-runs clean on both platforms (Android tuned to no error-level findings, iOS all `note`), and
-the flow, type and gate ran green in Actions. Since the collapse into one pipeline, the mobile
-steps live in `ci-build.yml` and `make scan` was re-run locally against both platforms with
-all three `mobile-sast` rules returning true.
+For the mobile half, verified locally after the switch to Oversecured: all three
+`oversecured` rules return true against the slim data the script emits from
+`oversecured/report-pass.json`, and the second and third return false against the untouched
+customer report - which is the failing case, not yet committed. `make package` still produces
+both zips, and `kosli attest custom` dry-runs with each zip's own fingerprint.
 
 For the release half (point 3), verified locally: the new flow template and
 `kosli/policies/release-gate.yml` validate against the published schemas; every new Kosli
@@ -220,13 +221,27 @@ released with one platform missing.
 matrix legs all attest to the same trail, so the trail has to exist before any of them starts
 — that is the whole job of `trail`, and it is why the legs cannot race creating it.
 `release-gate` needs `mobile` as well as `backend`: it asserts trail compliance, which
-includes both `mobile-sast` attestations, so without that edge it could run while a leg is
-still scanning. `publish-gate` needs only `backend`, since it judges the backend's controls.
+includes both `oversecured` attestations, so without that edge it could run while a leg is
+still going. `publish-gate` needs only `backend`, since it judges the backend's controls.
 
-**`mobile-sast`'s severity rule reads the effective SARIF level, not `.level`.** A result's
-`level` is optional; when absent the level comes from the rule's `defaultConfiguration`, then
-the spec default of `warning`. mobsfscan omits it often, so `.level == "error"` alone silently
-ignores those findings. The rule in `scripts/bootstrap_kosli.sh` walks the fallback chain.
+**The mobile control is a canned Oversecured report** (customer's call, 2026-08-25),
+replacing the mobsfscan SARIF scan, which is gone along with `make scan`.
+`oversecured/report-pass.json` is the customer's own scan of an Android APK with its two
+high-severity findings removed, so that it is the passing case; the untouched original is the
+failing case and goes in later as `report-fail.json`.
+
+**Only the report's header is attested; the report itself is an attachment.** The file is
+3.7 MB, nearly all of it code snippets and HTML remediation text, and Kosli documents no size
+limit for attestation data - not a thing to discover during a customer demo.
+`scripts/oversecured_attestation.py` copies `header` verbatim (the rules read
+`.header.scan.status` and `.header.severityCounts`) and reduces each finding to one line,
+which lands at ~25 KB.
+
+**`oversecured`'s third rule cross-checks the findings against the header.** Because the data
+is a projection of the report, a `severityCounts` that disagrees with the findings it
+summarises would otherwise pass on the header alone. Note the `// 0` in the second rule:
+Oversecured omits a severity from `severityCounts` when its count is zero rather than
+reporting `0`.
 
 **The flow template lists only what the build produces; post-build controls live in policies**
 (customer's call, 2026-08-25). The template is also the yardstick `kosli assert artifact` uses
@@ -253,8 +268,8 @@ everything it owed", including both mobile scans and the peer-review control dec
 already covers it, so this policy requires a decision about that control in its own right.
 There is no mobile-specific gate.
 
-**`mobile-sast` has jq rules but no JSON Schema**, unlike the three orders-api types. Nothing
-principled — SARIF's schema is large and the jq rules already pin `version` and the tool name.
+**`oversecured` has jq rules but no JSON Schema**, unlike the orders-api types. Nothing
+principled — the rules already pin the parts of the shape they depend on.
 
 **Deploy is the last job, and the release gate is the only way to reach it.** The deploy job
 downloads the artifact the gates approved rather than rebuilding, so the fingerprint that
@@ -298,16 +313,15 @@ reason that reads like a missing test. The release-gate job has the fingerprint 
 **Everything is built once, in one job.** The backend JAR and both mobile zips come from the
 same checkout, are fingerprinted there, and every attestation binds to those fingerprints. No
 rebuild happens later, so there is no question of the gated fingerprint differing from the
-deployed one. Cost is ~30s of mobsfscan per platform on top of the Maven build.
+deployed one.
 
 **The integration test workflow always succeeds, whichever variant you pick.** Same rule as
 everywhere else here: scripts report facts, Kosli decides. `fail` is the default input so the
 demo's first pass through the gate shows it blocking.
 
-**The Makefile owns building/scanning; the workflows own everything that talks to Kosli.**
-So `make scan` and `make package` need no API token and run locally in Docker, and the gate
-only ever runs in Actions. Keep that line: it is why the mobile half needs no toolchain
-installed.
+**The Makefile owns turning source into artifacts; the workflows own everything that talks to
+Kosli.** So `make package` needs no API token, and the gate only ever runs in Actions. Keep
+that line: it is why the mobile half needs no toolchain installed.
 
 ## Gotchas
 
@@ -345,17 +359,20 @@ installed.
   its `commit` input. One trail per push to `main`, so a re-run of a build reuses its trail
   and its attestations.
 - **Neither mobile app compiles, and nothing checks that they do.** No Gradle build, no Xcode
-  project; `androidx.appcompat` is an unresolved import. mobsfscan is pattern-based and does
-  not care. The artifacts are zips of the source, so the fingerprint-and-gate half is real.
-- **`minSdkVersion=30` and `<uses-sdk>` in the Android manifest are scanner-driven**, not app
-  requirements — mobsfscan raises error-level findings without them. Same for the empty
-  `NSAppTransportSecurity` dict: ATS defaults are secure, `NSAllowsArbitraryLoads` is what
-  trips the scanner.
-- **The mobile scans have no failing case.** Both platforms scan clean, so `mobile-sast` never
-  blocks. Showing it block needs a commit that introduces a weakness.
-- **Nothing validates the jq rules automatically.** All three `mobile-sast` rules were run
-  with `jq` against real `make scan` output at merge time and returned `true`; there is no
-  check that keeps them honest, so a later edit's breakage is first seen in a workflow run.
+  project; `androidx.appcompat` is an unresolved import. The artifacts are zips of the source,
+  so the fingerprint-and-gate half is real.
+- **Nothing scans this repo's mobile source any more.** The Oversecured report describes an
+  Android APK belonging to someone else (`app.name: "xxxx-Android"`, `scan.fileName:
+  "file1.apk"`), and the same report is attested to both mobile artifacts - including the iOS
+  one, whose `platform` field therefore says `android`.
+- **`minSdkVersion=30`, `<uses-sdk>` and the empty `NSAppTransportSecurity` dict are
+  historical** - added to satisfy mobsfscan, which is gone. Harmless, and correct for a real
+  app, so they stay.
+- **The mobile control has no failing case.** The committed report is the passing one.
+  `report-fail.json` is what shows it blocking.
+- **Nothing validates the jq rules automatically.** All three `oversecured` rules were run with
+  `jq` against the committed report and the failing original; there is no check that keeps them
+  honest, so a later edit's breakage is first seen in a workflow run.
 
 ## Setup
 

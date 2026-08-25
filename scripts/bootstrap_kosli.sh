@@ -53,17 +53,22 @@ kosli create attestation-type mutation-testing \
   --summary "Survived=.survived" \
   --summary "Not covered=.no_coverage"
 
-echo "==> mobile-sast attestation type"
-# A SARIF result's `level` is optional; when absent the effective level is the rule's
-# defaultConfiguration, then the spec default of "warning". mobsfscan omits it often, so
-# testing `.level == "error"` alone silently ignores those findings.
-# shellcheck disable=SC2016  # $rules is jq's, not the shell's; it must not expand.
-NO_ERROR_FINDINGS='[.runs[] | .tool.driver.rules as $rules | .results[] | (.level // $rules[.ruleIndex].defaultConfiguration.level // "warning")] | any(. == "error") | not'
-kosli create attestation-type mobile-sast \
-  --description "Mobile SAST scan in SARIF 2.1.0 format. Compliant when the scan reports no error-level findings." \
-  --jq "${NO_ERROR_FINDINGS}" \
-  --jq '.version == "2.1.0"' \
-  --jq '.runs[0].tool.driver.name == "mobsfscan"'
+echo "==> oversecured attestation type"
+# The report's severityCounts is what the second rule reads; the third reads the findings the
+# script derives from the same report, so a header that disagrees with its own findings cannot
+# pass. Oversecured omits a severity from severityCounts when its count is zero, hence // 0.
+kosli create attestation-type oversecured \
+  --description "Oversecured mobile application security scan. Compliant when the scan completed and found no high or critical severity issues." \
+  --jq '.header.scan.status == "completed"' \
+  --jq '(.header.severityCounts.critical // 0) == 0 and (.header.severityCounts.high // 0) == 0' \
+  --jq '[.findings[] | select(.false_positive == false) | .severity] | any(. == "high" or . == "critical") | not' \
+  --summary "App=.header.app.name" \
+  --summary "Platform=.header.app.platform" \
+  --summary "Findings=.header.scan.vulnerabilityCount" \
+  --summary "High=.header.severityCounts.high" \
+  --summary "Medium=.header.severityCounts.medium" \
+  --summary "Low=.header.severityCounts.low" \
+  --summary "Scan=.header.scan.id"
 
 echo "==> integration-test attestation type"
 # `errors` counts harness failures - a run that fell over is not a pass either.

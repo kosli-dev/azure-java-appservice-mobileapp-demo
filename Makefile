@@ -1,20 +1,15 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 
-MOBSFSCAN_IMAGE ?= opensecurity/mobsfscan:latest
-
 APP       ?= mobileorders
 PLATFORM  ?= android
 SRC       ?= $(APP)/$(PLATFORM)
 
 # Gitignored.
 BUILD_DIR ?= build
-SARIF     ?= $(BUILD_DIR)/mobsfscan-$(PLATFORM).sarif
 ARTIFACT  ?= $(BUILD_DIR)/$(APP)-$(PLATFORM).zip
 
-MOBSFSCAN := docker run --rm -v "$(PWD):/src" -w /src $(MOBSFSCAN_IMAGE)
-
-.PHONY: help scan package clean
+.PHONY: help package clean
 
 help: ## Show this help
 	@grep -hE '^[a-z][a-z-]*:.*?## ' $(MAKEFILE_LIST) \
@@ -22,10 +17,6 @@ help: ## Show this help
 
 $(BUILD_DIR):
 	@mkdir -p $(BUILD_DIR)
-
-scan: | $(BUILD_DIR) ## Scan the app source into build/
-	@# || true: findings must not fail the build. Kosli is the gate, not mobsfscan.
-	$(MOBSFSCAN) --sarif --type $(PLATFORM) $(SRC) > $(SARIF) || true
 
 package: $(ARTIFACT) ## Package the app source into build/
 $(ARTIFACT): | $(BUILD_DIR)
