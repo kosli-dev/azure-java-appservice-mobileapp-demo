@@ -379,7 +379,7 @@ The gate job attests the approval *before* asserting the policy, for the obvious
 ### What is released
 
 ```
-orders-api            deploy/app.jar, fingerprinted as a directory
+orders-api            deploy/{app.jar,build-time.txt}, fingerprinted as a directory
 mobileorders-android  build/mobileorders-android.zip  + Oversecured scan
 mobileorders-ios      build/mobileorders-ios.zip      + Oversecured scan
 ```
