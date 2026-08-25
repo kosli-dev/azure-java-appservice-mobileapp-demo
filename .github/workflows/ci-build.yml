@@ -11,13 +11,13 @@ name: CI build
 #   release-gate      waits for approval, then asks Kosli whether the release may go out
 #   deploy            put the approved build on the production App Service
 #
-# Two of the steps are manual, and neither of them is the decision:
+# deploy-staging auto-triggers "Report integration test result" for this commit, reporting
+# whichever result INTEGRATION_TEST_DEFAULT_RESULT names (default: pass). Run that workflow by
+# hand - before or after - to force pass or fail instead, e.g. to demo the gate blocking.
 #
-#   1. run "Report integration test result" for this commit, choosing pass or fail
-#   2. approve the release-gate job ("continue")
-#
-# The approval only lets the gate job run, and the job asks Kosli. A human can start the
-# gate; a human cannot talk it into passing.
+# One step stays manual, and it is not the decision: approving the release-gate job
+# ("continue"). The approval only lets the gate job run, and the job asks Kosli. A human can
+# start the gate; a human cannot talk it into passing.
 
 on:
   push:
@@ -90,8 +90,9 @@ jobs:
             echo ""
             echo "The trail is not compliant yet: nothing has reported an integration test run."
             echo ""
-            echo "1. Run the **Report integration test result** workflow with commit"
-            echo "   \`$KOSLI_TRAIL\`, choosing \`pass\` or \`fail\`."
+            echo "1. deploy-staging auto-triggers **Report integration test result** with commit"
+            echo "   \`$KOSLI_TRAIL\`, reporting the INTEGRATION_TEST_DEFAULT_RESULT variable's"
+            echo "   result. Run that workflow by hand to force \`pass\` or \`fail\` instead."
             echo "2. Approve **release-gate** below. Kosli decides from there."
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -425,6 +426,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      # For triggering the "Report integration test result" workflow below.
+      actions: write
     environment:
       name: staging
       url: ${{ steps.deploy.outputs.webapp-url }}
@@ -453,6 +456,18 @@ jobs:
             echo ""
             echo "Integration tests run against this before the production gate is approved."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Fire-and-forget: leaves `result` on its "default" choice, which
+      # report-integration-test-result.yml resolves from the INTEGRATION_TEST_DEFAULT_RESULT
+      # repo variable. Run that workflow by hand afterwards to force pass/fail instead.
+      - name: Trigger the integration test report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run report-integration-test-result.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "${{ github.ref_name }}" \
+            -f commit="$KOSLI_TRAIL"
 
   # ---------------------------------------------------------- 8. Deploy to production
   deploy:

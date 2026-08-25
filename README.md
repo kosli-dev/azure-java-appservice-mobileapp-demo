@@ -177,6 +177,7 @@ Optional variables that tune the demo without editing code:
 | `MUTATION_THRESHOLD` | `85` | Mutation score the component must reach. The service scores ~76%, so the default blocks the publish gate. Set it to `70` for a clean run. |
 | `KOSLI_DRY_RUN` | unset | Set to `true` to run the pipeline without sending anything to Kosli. |
 | `REPORT_AZURE_ENV` | unset | Set to `true` to enable the scheduled Azure environment reporting (both environments). |
+| `INTEGRATION_TEST_DEFAULT_RESULT` | unset (falls back to `pass`) | Which canned report `deploy-staging`'s auto-triggered **Report integration test result** run sends when nobody picks `pass`/`fail` by hand. Set to `fail` to have the release gate block by default. |
 
 GitHub environments gate four jobs: `production-release` the release gate, `production` the
 production deploy, `staging` the staging deploy, and `waivers` the waiver workflow. **Add
@@ -351,27 +352,34 @@ and judged clean, and a named human has approved the release.
 
 | Step | What you do | What happens |
 | --- | --- | --- |
-| 1 | Merge an approved pull request | **CI build** builds and attests everything — backend and both mobile apps in parallel — clears the publish gate, deploys the build to the **staging** App Service, and stops at the `release-gate` job, which is waiting on the protected `production-release` environment. |
-| 2 | Run **Report integration test result** with the commit SHA and result `pass` or `fail` | One of the two canned runs under `integration-tests/` is attested to the trail as `integration-tests`. The workflow always succeeds — it reports facts. Kosli evaluates them. |
+| 1 | Merge an approved pull request | **CI build** builds and attests everything — backend and both mobile apps in parallel — clears the publish gate, deploys the build to the **staging** App Service, then auto-triggers **Report integration test result** for the commit, and stops at the `release-gate` job, which is waiting on the protected `production-release` environment. |
+| 2 *(optional)* | Run **Report integration test result** by hand with the commit SHA and result `pass` or `fail` | Overrides (or precedes) the auto-triggered run. One of the two canned runs under `integration-tests/` is attested to the trail as `integration-tests`. The workflow always succeeds — it reports facts. Kosli evaluates them. |
 | 3 | Approve `release-gate` in *Review deployments* | The job records **who approved it**, then runs `kosli assert artifact --policy release-gate`. If the integration test run was never reported, or was reported as failing, the gate fails and nothing is deployed. |
 | — | nothing | Once the gate opens, the exact JAR the gate approved — the same one already on staging — is deployed to the production App Service and smoke-tested. |
 
 The point of step 3 is that pressing continue is **not** the decision. The approval only lets
-the job start; what the job does is ask Kosli. So the demo has two distinct failure modes to
-show:
+the job start; what the job does is ask Kosli.
+
+The auto-triggered run in step 1 leaves `result` on its "default" choice, which
+`report-integration-test-result.yml` resolves from the `INTEGRATION_TEST_DEFAULT_RESULT` repo
+variable (falls back to `pass` if the variable is unset) — see
+[Setup](#setup). To walk through the demo's failure modes, run the workflow by hand *before*
+approving `release-gate`:
 
 ```bash
-# approve without reporting anything -> blocked: the trail is missing integration-tests
-# report `fail`, then approve       -> blocked: .failed == 0 and .errors == 0 are false
-# report `pass`, then approve       -> deployed and smoke-tested
+# do nothing (INTEGRATION_TEST_DEFAULT_RESULT unset) -> auto-reported as `pass` -> deployed
+# report `fail` by hand, then approve                -> blocked: .failed == 0 and .errors == 0 are false
+# set INTEGRATION_TEST_DEFAULT_RESULT=fail            -> auto-reported as `fail` -> blocked
 ```
 
 Reporting again adds another attestation to the trail rather than replacing it, and Kosli
-judges the latest — so after a blocked release you re-report as `pass` and re-run the
-`release-gate` job, with both reports left on the trail as evidence.
+judges the latest — so after a blocked release you re-report as `pass` (by hand, with
+`result: pass`) and re-run the `release-gate` job, with every report left on the trail as
+evidence.
 
 The commit SHA is the trail name, so the integration test workflow needs it as input; the
-build job's summary prints it, and it is the run's own commit.
+build job's summary prints it, ci-build.yml's auto-trigger step passes it directly, and it is
+the run's own commit.
 
 ### Who pressed continue
 
