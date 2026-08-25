@@ -3,8 +3,14 @@
 # Kosli flow template for the order system: the Java backend and both mobile apps, built,
 # controlled and released together from one pipeline.
 #
-# A trail is a commit on main. It is compliant only once every control below has been
-# attested and is itself compliant, which is what the release gate asserts.
+# A trail is a commit on main. Everything here is produced by the build itself, so the trail
+# is compliant as soon as the build has run - the publish gate judges the artifact against
+# this template while the build is still the only thing that has happened.
+#
+# The release controls - the integration test run and the approval - are deliberately NOT
+# here. They are attested after the build, so requiring them in the template would make the
+# component non-compliant at publish-gate time. They live in kosli/policies/release-gate.yml
+# and kosli/policies/prod-deploy-gate.yml instead.
 #
 # Applied by CI with:
 #   kosli create flow order-system-ci --template-file kosli/flow-templates/order-system-ci.yml
@@ -14,12 +20,6 @@ trail:
     # Raw pull-request evidence for the merge commit (who opened it, who reviewed it, when).
     - name: pull-request
       type: pull_request
-    # Reported after the build, by the "Report integration test result" workflow.
-    - name: integration-tests
-      type: custom:integration-test
-    # Who pressed "Approve" on the environment the release gate waits on.
-    - name: release-approval
-      type: custom:approval-github-workflow
   artifacts:
     - name: orders-api
       attestations:

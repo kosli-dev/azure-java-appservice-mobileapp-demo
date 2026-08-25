@@ -8,8 +8,8 @@
 #   kosli create policy prod-deploy-gate kosli/policies/prod-deploy-gate.yml --type env
 #   kosli attach-policy prod-deploy-gate --environment azure-appservice-prod
 #
-# It is the publish gate's controls plus whole-trail compliance, so what runs in production is
-# judged at least as strictly as what the pipeline released.
+# It is the release gate's control set, so what runs in production is judged by the same bar
+# the pipeline used to let it out - including the integration test run and the approval.
 _schema: https://docs.kosli.com/schemas/policy/v1
 
 artifacts:
@@ -26,3 +26,7 @@ artifacts:
       type: sonar
     - name: mutation-tests
       type: custom:mutation-testing
+    - name: integration-tests
+      type: custom:integration-test
+    - name: release-approval
+      type: custom:approval-github-workflow

@@ -13,9 +13,10 @@
 # authority: the integration test run has to have been reported to the trail, and judged
 # compliant by the jq rules on the `integration-test` type, or this fails.
 #
-# No `attestations:` list, unlike publish-gate.yml: `trail-compliance` already requires every
-# control in order-system-ci.yml - the backend's, both mobile scans, the integration test run
-# and the approval - which is exactly the release control set.
+# `trail-compliance` covers the build's own controls, from order-system-ci.yml. The two
+# release controls are listed below instead: they are attested after the build, so the
+# template cannot require them without making the component non-compliant at publish-gate
+# time. This policy is where they are enforced.
 _schema: https://docs.kosli.com/schemas/policy/v1
 
 artifacts:
@@ -24,6 +25,15 @@ artifacts:
   provenance:
     required: true
 
-  # Everything order-system-ci.yml asks for.
+  # Everything order-system-ci.yml asks for: the backend's controls and both mobile scans.
   trail-compliance:
     required: true
+
+  # The release controls. Both are attested against this artifact's fingerprint, not the
+  # trail, so that these rules match them.
+  attestations:
+    - name: integration-tests
+      type: custom:integration-test
+
+    - name: release-approval
+      type: custom:approval-github-workflow

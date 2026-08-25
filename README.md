@@ -24,8 +24,9 @@ Everything lands on one Kosli flow, `order-system-ci`, whose trail is the commit
 | `mobileorders-android` | the Mobile Orders Android app, scanned from source | mobsfscan SAST |
 | `mobileorders-ios` | the Mobile Orders iOS app, scanned from source | mobsfscan SAST |
 
-plus two controls on the trail itself, because they are about the release rather than one
-binary: the integration test run across the components, and the human approval.
+plus two controls that arrive after the build — the integration test run across the
+components, and the human approval — which the release-gate policy requires rather than the
+flow template.
 
 Between them they cover points 1, 2 and 3 of the customer's demo scenario.
 
@@ -340,7 +341,7 @@ and judged clean, and a named human has approved the release.
 | --- | --- | --- |
 | 1 | Merge an approved pull request | **CI build** builds and attests everything — backend and both mobile apps in parallel — clears the publish gate, and stops at the `release-gate` job, which is waiting on the protected `production-release` environment. |
 | 2 | Run **Report integration test result** with the commit SHA and result `pass` or `fail` | One of the two canned runs under `integration-tests/` is attested to the trail as `integration-tests`. The workflow always succeeds — it reports facts. Kosli evaluates them. |
-| 3 | Approve `release-gate` in *Review deployments* | The job records **who approved it** to the trail, then runs `kosli assert artifact --policy release-gate`. If the integration test run was never reported, or was reported as failing, the gate fails and nothing is deployed. |
+| 3 | Approve `release-gate` in *Review deployments* | The job records **who approved it**, then runs `kosli assert artifact --policy release-gate`. If the integration test run was never reported, or was reported as failing, the gate fails and nothing is deployed. |
 | — | nothing | Once the gate opens, the exact JAR the gate approved is deployed to App Service and smoke-tested. |
 
 The point of step 3 is that pressing continue is **not** the decision. The approval only lets
@@ -365,12 +366,12 @@ build job's summary prints it, and it is the run's own commit.
 `github.actor` is whoever merged the pull request, not whoever approved the release, so the
 approver is read back from the run's approvals API by
 [`.github/actions/get-github-workflow-approver`](.github/actions/get-github-workflow-approver)
-and attested to the trail as `release-approval`. The flow template requires it, so a release
-trail carries the name of the person who let it through next to the machine controls — and
-`kosli attest`, not the Actions log, is where that lives.
+and attested as `release-approval` against the artifact being released. The release-gate
+policy requires it, so nothing reaches App Service without the name of the person who let it
+through sitting in Kosli next to the machine controls — and `kosli attest`, not the Actions
+log, is where that lives.
 
-The gate job attests the approval *before* asserting the policy, since the policy requires
-the trail to be compliant and the template requires the approval.
+The gate job attests the approval *before* asserting the policy, for the obvious reason.
 
 ### What is released
 
@@ -391,15 +392,22 @@ mobile artifacts exist to be gated, until there are real builds and a store to p
 | `publish-gate` | the backend's own controls: peer review, unit tests, Sonar, mutation testing | right after the build, before anything human happens |
 | `release-gate` | the whole trail: both gates' controls, both mobile scans, the integration test run, the approval | after the approval, as the last thing before the deploy |
 
-`publish-gate` deliberately does **not** require `trail-compliance`: it runs before the
-integration test and the approval exist, so requiring the whole trail would always block.
-`release-gate` is the opposite — it carries no `attestations:` list, because
-`trail-compliance: required: true` already requires every control in
-[`order-system-ci.yml`](kosli/flow-templates/order-system-ci.yml).
+**The flow template only lists what the build itself produces.** It is the yardstick the
+publish gate uses, and that gate runs minutes before the integration test result and the
+approval exist — so a template that required them would make the component non-compliant at
+publish time, every time. `integration-tests` and `release-approval` therefore live in
+[`release-gate.yml`](kosli/policies/release-gate.yml), which is what turns them into a gate,
+and in [`prod-deploy-gate.yml`](kosli/policies/prod-deploy-gate.yml), which judges what is
+actually running by the same bar.
 
-`integration-tests` and `release-approval` sit on the **trail**, not on an artifact: they are
-about the release — the combination of the components, and the decision to ship them — rather
-than any one binary.
+So `publish-gate` requires the backend's four controls and no `trail-compliance`, while
+`release-gate` requires `trail-compliance` — everything the build owed — **plus** the two
+release controls by name.
+
+Both release controls are attested against the `orders-api` fingerprint rather than the trail,
+because a policy's `attestations:` rules match attestations on the artifact being asserted.
+The release-gate job already has that fingerprint; the integration test workflow looks it up
+with `kosli get artifact order-system-ci:<sha>`.
 
 ## Deliberate simplifications
 
