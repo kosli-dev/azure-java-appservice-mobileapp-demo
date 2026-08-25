@@ -367,8 +367,8 @@ jobs:
         with:
           environment-name: production-release
 
-      # Bound to the artifact, not the trail: release-gate.yml matches it as an attestation
-      # on the artifact it is asserting.
+      # Bound to the artifact, not the trail: production-readiness.yml matches it as an
+      # attestation on the artifact being asserted.
       - name: Attest the approval
         run: |
           kosli attest custom \
@@ -379,14 +379,35 @@ jobs:
             --attachments "${{ steps.approver.outputs.approval-json-file }}"
           echo "Approved by ${{ steps.approver.outputs.approver }}" >> "$GITHUB_STEP_SUMMARY"
 
-      # The policy is kosli/policies/release-gate.yml. It requires the whole trail to be
-      # compliant, so a missing or failing integration test blocks here - as does an
-      # unscanned mobile app or a still-failing backend control.
-      - name: Assert the release-gate policy
+      # An environment with no policies attached makes the assert below pass vacuously -
+      # verified against kosli-public: `assert artifact --environment` on an environment with
+      # an empty policy list prints COMPLIANT and exits 0. A gate that cannot fail is worse
+      # than no gate, so refuse to run rather than wave the release through.
+      - name: Check the environment has policies attached
+        env:
+          KOSLI_ENV: ${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }}
+        run: |
+          attached=$(kosli get environment "$KOSLI_ENV" --output json | jq '.policies // [] | length')
+          echo "$KOSLI_ENV has $attached policies attached"
+          if [ "$attached" -eq 0 ]; then
+            echo "::error::No policies attached to $KOSLI_ENV - the release gate would pass"\
+                 " no matter what. Run the Bootstrap Kosli workflow with 'create environment'."
+            exit 1
+          fi
+
+      # Asserted against the *environment*, not against a policy of the gate's own: with
+      # --environment, Kosli judges the artifact by every policy attached to that environment
+      # - secure-development and production-readiness. So the question this gate asks is
+      # exactly "would this artifact be allowed to run in production?", and there is one
+      # definition of that, enforced here before the deploy and continuously afterwards by the
+      # environment snapshots. Between them the two policies require provenance, a compliant
+      # trail and the release controls, so a missing or failing integration test blocks here -
+      # as does an unscanned mobile app or a still-failing backend control.
+      - name: Assert the production environment's policies
         run: |
           kosli assert artifact \
             --fingerprint "${{ needs.backend.outputs.orders-api-fingerprint }}" \
-            --policy release-gate \
+            --environment "${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }}" \
             --flow "$KOSLI_FLOW"
 
       - name: Explain how to unblock
@@ -396,8 +417,10 @@ jobs:
           ==========================================================================
           The release gate blocked ${KOSLI_TRAIL}.
 
-          Trail:  https://app.kosli.com/${KOSLI_ORG}/flows/${KOSLI_FLOW}/trails/${KOSLI_TRAIL}
-          Policy: kosli/policies/release-gate.yml
+          Trail:    https://app.kosli.com/${KOSLI_ORG}/flows/${KOSLI_FLOW}/trails/${KOSLI_TRAIL}
+          Policies: whatever is attached to ${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }} -
+                    kosli/policies/secure-development.yml and
+                    kosli/policies/production-readiness.yml
 
           The usual cause in this demo is the integration test run: either it was never
           reported to this trail, or it was reported as a failing run. The approval itself

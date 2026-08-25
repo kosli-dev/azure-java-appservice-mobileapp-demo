@@ -3,7 +3,7 @@ name: Report Azure environment
 # Reports what is actually running in Azure App Service to a Kosli environment, so Kosli can
 # compare running software against what the pipeline approved. This is the groundwork for the
 # deployment gate (point 4 of the customer demo scenario) - it is what makes
-# `kosli assert snapshot` and the prod-deploy-gate policy meaningful.
+# `kosli assert snapshot` and the environments' policies meaningful.
 #
 # Optional: it only runs when the repository variable REPORT_AZURE_ENV is set to 'true' and
 # the Azure service-principal secrets below exist. `kosli snapshot azure` needs a client

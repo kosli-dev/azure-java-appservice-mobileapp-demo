@@ -9,8 +9,9 @@
 #
 # The release controls - the integration test run and the approval - are deliberately NOT
 # here. They are attested after the build, so requiring them in the template would make the
-# component non-compliant at publish-gate time. They live in kosli/policies/release-gate.yml
-# and kosli/policies/prod-deploy-gate.yml instead.
+# component non-compliant at publish-gate time. They live in
+# kosli/policies/production-readiness.yml instead, which is attached to the production
+# environment and is what the release gate asserts against.
 #
 # Applied by CI with:
 #   kosli create flow order-system-ci --template-file kosli/flow-templates/order-system-ci.yml
@@ -27,7 +28,7 @@ trail:
         # (fetched back with `kosli get attestation`, never a second attestation in its own
         # right), recorded with `kosli attest decision --control peer-review`. Unlike
         # integration-tests/release-approval, this is produced in the same job as the evidence
-        # it judges, so it belongs here rather than in release-gate.yml - a bad peer review
+        # it judges, so it belongs here rather than in a policy - a bad peer review
         # fails the trail (and so publish-gate) as soon as the build finishes.
         - name: peer-review-decision
           type: decision
