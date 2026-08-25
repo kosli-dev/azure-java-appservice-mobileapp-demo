@@ -35,13 +35,14 @@ trail is the commit:
 
 `orders-api.peer-review` is gone (customer's call, 2026-08-25): it had already been reduced to
 evidence only, with no compliance-deciding jq rules, once the judgment moved to a control —
-and evidence nobody reads back from Kosli doesn't need to be attested. The facts are still
-gathered by `scripts/peer_review_attestation.py` into `peer-review.json`, but that file is now
-only ever read locally, by `kosli evaluate input --policy kosli/policies/peer-review.rego` in
-the same job. The verdict is recorded as `orders-api.peer-review-decision`, a `decision`-type
-attestation against the `peer-review` control. It *is* in the flow template — it's produced in
-the same job as the evidence it judges, so nothing stops it being there, and being there means
-publish-gate blocks on a bad peer review, same as before.
+and evidence nobody reads back from Kosli doesn't need to be attested. The facts now come from
+the trail's own `pull-request` attestation, fetched back with `kosli get attestation` and fed
+straight into `kosli evaluate input --policy kosli/policies/peer-review.rego` in the same job —
+no second GitHub API call, no custom JSON (`scripts/peer_review_attestation.py` is gone). The
+verdict is recorded as `orders-api.peer-review-decision`, a `decision`-type attestation against
+the `peer-review` control. It *is* in the flow template — it's produced in the same job as the
+evidence it judges, so nothing stops it being there, and being there means publish-gate blocks
+on a bad peer review, same as before.
 
 Template: `kosli/flow-templates/order-system-ci.yml`. The `orders-api-ci`, `mobileorders` and
 `order-system-release` flows still exist in `kosli-public` with their history; nothing writes
@@ -62,7 +63,14 @@ Verified before pushing:
 - `actionlint` (with shellcheck), `shellcheck`, and `bicep build` all clean.
 - `kosli/policies/peer-review.rego` passes `opa check` and `opa fmt --diff` (no diff), and
   `kosli evaluate input` against it returns the expected verdict for all four cases: two
-  approvers, one independent approver, one dependent approver, no pull request.
+  approvers, one independent approver, one dependent approver, no pull request. Unlike almost
+  everything else in this file, this one *has* talked to a live API: the shape asserted in the
+  rego (`pull_requests[].{url,merged_at,approvers[].username,commits[].author_username}`) was
+  read back from an actual `pull_request`-type attestation in `kosli-public` (flow
+  `actions-integration`) with `kosli get attestation`, and cross-checked against a `--dry-run
+  --debug` run of `kosli attest pullrequest github` against real merge commits in this repo's
+  own history (two distinct approvers, one independent approver, and zero pull requests all
+  observed for real commits) — not just guessed from the CLI's `--help` text.
 
 For the mobile half, verified locally after the switch to Oversecured: all three
 `oversecured` rules return true against the slim data the script emits from
@@ -132,27 +140,44 @@ Not verified, and the first live run is the test of it:
 
 **The native `pull_request` attestation is not enough on its own for peer review.** It is
 compliant as soon as a PR exists — it records approvers but cannot require them. So the
-pipeline attests `pull-request` (trail level) for the raw evidence, and separately gathers the
-pull-request facts (who approved, whether they wrote the code) that decide whether it counts
+pipeline attests `pull-request` (trail level) for the raw evidence, and separately judges the
+same pull-request facts (who approved, whether they wrote the code) to decide whether it counts
 as a peer review — see below for how those facts are judged and what happens to them.
+
+**Peer review is judged from the `pull-request` attestation's own data, fetched back with
+`kosli get attestation`, not from a second GitHub API call.** `scripts/peer_review_attestation.py`
+used to re-fetch the same PR/reviews/commits facts from the GitHub API directly into
+`peer-review.json` — duplicate work, since `kosli attest pullrequest github` (the `trail` job,
+above) had already fetched exactly that. Removed (customer's call, 2026-08-25, prompted by
+noticing the duplication): the `backend` job instead runs `kosli get attestation pull-request
+--flow order-system-ci --trail "$KOSLI_TRAIL" --output json | jq '.[0]' > pull-request.json`
+and feeds that straight to `kosli evaluate input --policy kosli/policies/peer-review.rego`.
+The shape is the CLI's own — `pull_requests: [{url, merged_at, approvers: [{username}],
+commits: [{author_username}], ...}]` — confirmed by reading it back from a real attestation in
+`kosli-public` and by `--dry-run --debug` runs of `attest pullrequest github` against this
+repo's own history (see State, above); the rego picks the merged PR if there is one (falling
+back to the first) and compares `approvers` against `commits[].author_username` for the same
+two-distinct-or-one-independent rule as before. This is a **read-after-write** dependency
+within the `backend` job that the old script never had, so it inherits a new failure mode: in
+`KOSLI_DRY_RUN` mode the `trail` job's `attest pullrequest github` call never actually writes
+anything, so this `get attestation` call finds nothing for that trail and the step fails — see
+Gotchas.
 
 **Peer review's judgment moved off an attestation type and onto a control (customer's call,
 2026-08-25), and the type itself was dropped shortly after (customer's call, same day).**
 `orders-api.peer-review` used to be a custom attestation type carrying the compliance-deciding
 jq rule `(.distinct_approvers >= 2) or (.independent_approval == true)` directly, the same as
 every other custom type here. That judgment moved to `kosli/policies/peer-review.rego`, run
-with `kosli evaluate input --input-file peer-review.json --policy
-kosli/policies/peer-review.rego` against the exact same JSON the type used to judge, with the
-verdict recorded as a `decision`-type attestation against the `peer-review` control (`kosli
-create control peer-review`), via `kosli attest decision --control peer-review
---compliant=<verdict>`, named `peer-review-decision` in
+with `kosli evaluate input --policy kosli/policies/peer-review.rego` against the pull-request
+attestation data described above, with the verdict recorded as a `decision`-type attestation
+against the `peer-review` control (`kosli create control peer-review`), via `kosli attest
+decision --control peer-review --compliant=<verdict>`, named `peer-review-decision` in
 `kosli/flow-templates/order-system-ci.yml`. Once the type carried no jq rules of its own —
 evidence nobody read back from Kosli — attesting it stopped earning its keep, so the `kosli
 attest custom --type peer-review` call and the `kosli create attestation-type peer-review`
-call were both removed; `scripts/peer_review_attestation.py` still writes `peer-review.json`
-in the `backend` job, but now purely as local input to the `evaluate input` call in the same
-step, and it still travels as an `--attachments` file on the `peer-review-decision`
-attestation, so the raw evidence is not lost, just no longer double-attested. Unlike
+call were both removed; `pull-request.json` still travels as an `--attachments` file on the
+`peer-review-decision` attestation, so the raw evidence is not lost, just no longer
+double-attested. Unlike
 `integration-tests`/`release-approval`, `peer-review-decision` is produced in the same job as
 the evidence it judges, so being in the flow template (and so gating publish-gate, via
 `trail-compliance`) is correct, not a timing hazard. This does **not** reopen the earlier
@@ -377,6 +402,12 @@ that line: it is why the mobile half needs no toolchain installed.
 - **`KOSLI_DRY_RUN=true` makes the release gate pass no matter what** — `kosli assert` exits 0
   in dry-run mode. Same for the publish gate. Fine for rehearsing the pipeline, useless for
   rehearsing the gate.
+- **`KOSLI_DRY_RUN=true` also breaks the peer review step, not just the gates.** The `trail`
+  job's `kosli attest pullrequest github` no-ops in dry-run mode (nothing is written), so the
+  `backend` job's later `kosli get attestation pull-request` finds nothing on that trail and
+  the step fails outright — this now breaks rehearsing the *build*, where before it didn't:
+  the old script hit the GitHub API directly and never touched Kosli until the final
+  (harmless, dry-run-safe) `evaluate input`/`attest decision` calls.
 - **Re-running the release gate job re-attests the same approver.** The approvals API returns the
   run's approvals, and a re-run does not create a new one, so a blocked release that is
   re-reported and re-run records the original approval again. Fine here; worth knowing before
