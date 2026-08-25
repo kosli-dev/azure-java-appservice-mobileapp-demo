@@ -3,6 +3,10 @@ name: Report integration test result
 # Reports the integration test run for a commit to Kosli, between the build and the release
 # gate in the CI build pipeline.
 #
+# ci-build.yml triggers this automatically right after the staging deploy, leaving `result` on
+# its "default" choice - see INTEGRATION_TEST_DEFAULT_RESULT below. Run it by hand instead (or
+# again, on top of the auto-triggered run) to force a specific pass/fail.
+#
 # There is no real integration suite in this demo, so the run is one of two canned reports
 # under integration-tests/. Which one you pick does not decide anything here - the workflow
 # always succeeds. It uploads facts; the jq rules on the `integration-test` attestation type
@@ -17,10 +21,10 @@ on:
         type: string
         required: true
       result:
-        description: "Which integration test report to send"
+        description: "Which integration test report to send (default: use the INTEGRATION_TEST_DEFAULT_RESULT repo variable)"
         type: choice
-        options: [pass, fail]
-        default: fail
+        options: [default, pass, fail]
+        default: default
 
 permissions:
   contents: read
@@ -31,6 +35,10 @@ env:
   KOSLI_TRAIL: ${{ inputs.commit }}
   KOSLI_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}
   KOSLI_DRY_RUN: ${{ vars.KOSLI_DRY_RUN }}
+  # ci-build.yml auto-triggers this workflow right after the staging deploy without setting
+  # `result`, which leaves it on its "default" choice - this is what decides the run when
+  # nobody has picked pass/fail by hand.
+  INTEGRATION_TEST_DEFAULT_RESULT: ${{ vars.INTEGRATION_TEST_DEFAULT_RESULT || 'pass' }}
 
 jobs:
   report:
@@ -48,8 +56,13 @@ jobs:
       # back at where it came from.
       - name: Prepare the report
         env:
-          VARIANT: ${{ inputs.result }}
+          RESULT_INPUT: ${{ inputs.result }}
         run: |
+          VARIANT="$RESULT_INPUT"
+          if [ "$VARIANT" = "default" ]; then
+            VARIANT="$INTEGRATION_TEST_DEFAULT_RESULT"
+          fi
+          echo "VARIANT=$VARIANT" >> "$GITHUB_ENV"
           jq \
             --arg release "$KOSLI_TRAIL" \
             --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
@@ -86,8 +99,6 @@ jobs:
             --attachments integration-test.json
 
       - name: Summary
-        env:
-          VARIANT: ${{ inputs.result }}
         run: |
           {
             echo "### Integration test run reported"

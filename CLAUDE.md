@@ -349,6 +349,25 @@ would block the very testing whose result the release gate then requires. The st
 environment gets no attached policy for the same reason; `prod-deploy-gate` stays on
 production only.
 
+**The integration test report auto-triggers after staging deploy, but stays a workflow_dispatch
+workflow too** (2026-08-25). `deploy-staging`'s last step calls `gh workflow run
+report-integration-test-result.yml -f commit="$KOSLI_TRAIL"` (needs `actions: write` on that
+job's token) and deliberately omits `-f result=...`, leaving `result` on a new `default` choice
+(alongside `pass`/`fail`). The workflow resolves `default` to the `INTEGRATION_TEST_DEFAULT_RESULT`
+repo variable, falling back to `pass` if unset — chosen, not `fail`, so the pipeline reaches a
+deployable state with no manual step at all. This changes what the out-of-the-box demo shows:
+previously `result`'s own schema default was `fail`, so a release approved with no manual
+step was *always* blocked on `integration-tests`, showing the "controls, not a green pipeline"
+story for free. Now that first-blocking-for-free behaviour is gone unless
+`INTEGRATION_TEST_DEFAULT_RESULT` is set to `fail` — to demo the block, either set that
+variable or run `report-integration-test-result.yml` by hand with `result: fail` before
+approving `release-gate`; running it again after (any result) adds a second attestation and
+Kosli judges the latest, per the existing "reporting again" behaviour. Not run live yet — the
+first live run of `ci-build.yml` since this landed is what confirms `gh workflow run`
+authenticates correctly with the job's own `GITHUB_TOKEN` and that `--ref` (passed as
+`github.ref_name`, i.e. `main`) resolves against a workflow file that only exists on that same
+push.
+
 **Each environment gets its own Azure resource group.** `kosli snapshot azure` snapshots a
 whole resource group and has no way to filter by app (checked against CLI v2.38.0 — the only
 scoping flag is `--azure-resource-group-name`), so two web apps in one group would report into
