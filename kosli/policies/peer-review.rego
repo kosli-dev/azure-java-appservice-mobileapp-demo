@@ -4,20 +4,35 @@ package policy
 # by two distinct people, or by one approver who did not write the code - Kosli's "never
 # alone" review control: https://github.com/kosli-dev/control-actions.
 #
-# Evaluated with:
-#   kosli evaluate input --input-file peer-review.json --policy kosli/policies/peer-review.rego
+# Evaluated directly against the data of the trail's own `pull-request` attestation (the one
+# `kosli attest pullrequest github` already reports), fetched back with `kosli get
+# attestation` - no separate GitHub API call or custom JSON is needed:
 #
-# The verdict is recorded against the `peer-review` control with:
-#   kosli attest decision --control peer-review --compliant=<allow>
+#   kosli get attestation pull-request --flow order-system-ci --trail "$KOSLI_TRAIL" \
+#     --output json | jq '.[0]' > pull-request.json
+#   kosli evaluate input --input-file pull-request.json --policy kosli/policies/peer-review.rego
 #
-# peer-review.json is the same data the `peer-review` custom attestation carries - see
-# scripts/peer_review_attestation.py.
+# input.pull_requests is the CLI's own shape: a list of
+# {url, merged_at, approvers: [{username}], commits: [{author_username}], ...}.
 default allow := false
 
-has_pull_request if input.pull_request_url != null
+has_pull_request if count(input.pull_requests) > 0
 
-sufficient_review if input.distinct_approvers >= 2
-sufficient_review if input.independent_approval == true
+# A commit can be associated with more than one pull request (rare); prefer the merged one,
+# since that is the one that actually reached main, falling back to the first if none merged.
+merged_prs := [pr | some pr in input.pull_requests; pr.merged_at != null]
+
+pr := merged_prs[0] if count(merged_prs) > 0
+
+pr := input.pull_requests[0] if count(merged_prs) == 0
+
+approvers := {a.username | some a in pr.approvers}
+
+committers := {c.author_username | some c in pr.commits}
+
+sufficient_review if count(approvers) >= 2
+
+sufficient_review if count(approvers - committers) > 0
 
 allow if {
 	has_pull_request

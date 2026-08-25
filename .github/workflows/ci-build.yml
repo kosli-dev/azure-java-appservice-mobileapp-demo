@@ -153,24 +153,25 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # -------------------------------------------------------------------- 1. Peer review
-      - name: Gather the peer review evidence
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The `pull-request` attestation (trail job) already gathered everything a peer review
+      # needs to judge - who approved, who wrote the code - so there is no separate GitHub API
+      # call here: just read that attestation back.
+      - name: Fetch the pull request attestation
         run: |
-          python3 scripts/peer_review_attestation.py \
-            --repo "$GITHUB_REPOSITORY" \
-            --commit "$GITHUB_SHA" \
-            --out peer-review.json
+          kosli get attestation pull-request \
+            --flow "$KOSLI_FLOW" \
+            --trail "$KOSLI_TRAIL" \
+            --output json | jq '.[0]' > pull-request.json
 
-      # The facts never reach Kosli as an attestation of their own - kosli/policies/peer-review.rego
-      # judges peer-review.json directly, and the verdict is recorded as a decision against
+      # The facts never reach Kosli as a second attestation - kosli/policies/peer-review.rego
+      # judges pull-request.json directly, and the verdict is recorded as a decision against
       # the `peer-review` control. peer-review-decision is in the flow template
       # (order-system-ci.yml), so a bad peer review fails trail-compliance - and so
       # publish-gate - as soon as this job finishes, same as unit-tests or mutation-tests.
       - name: Evaluate and record the peer review control decision
         run: |
           VERDICT="$(kosli evaluate input \
-            --input-file peer-review.json \
+            --input-file pull-request.json \
             --policy kosli/policies/peer-review.rego \
             --no-assert \
             --output json)"
@@ -185,7 +186,8 @@ jobs:
             --fingerprint "$KOSLI_FINGERPRINT" \
             --control peer-review \
             --compliant="$COMPLIANT" \
-            --attachments peer-review.json
+            --attachments pull-request.json \
+            --attachments kosli/policies/peer-review.rego
 
       - name: Attest the unit tests
         run: |
@@ -286,7 +288,7 @@ jobs:
 
   # ------------------------------------------------------------------------- 5. Publish gate
   publish-gate:
-    name: Can the system be released to staging?
+    name: Can release to staging?
     runs-on: ubuntu-latest
     needs: backend
     steps:
@@ -309,7 +311,7 @@ jobs:
       - name: Explain how to unblock
         if: failure()
         run: |
-          cat <<EOF
+          MESSAGE=$(cat <<EOF
           ==========================================================================
           The publish gate blocked this component.
 
@@ -327,10 +329,13 @@ jobs:
           simply not have landed yet.
           ==========================================================================
           EOF
+          )
+          echo "$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
 
   # ------------------------------------------------------------------------- 6. Release gate
   release-gate:
-    name: Can the system be released to Production?
+    name: Can release to Production?
     runs-on: ubuntu-latest
     needs: [backend, mobile, publish-gate]
     # Without required reviewers on this environment the job does not wait, and there is
@@ -379,7 +384,7 @@ jobs:
       - name: Explain how to unblock
         if: failure()
         run: |
-          cat <<EOF
+          MESSAGE=$(cat <<EOF
           ==========================================================================
           The release gate blocked ${KOSLI_TRAIL}.
 
@@ -399,6 +404,9 @@ jobs:
           Kosli judges the latest one.
           ==========================================================================
           EOF
+          )
+          echo "$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     name: Deploy to Azure App Service
