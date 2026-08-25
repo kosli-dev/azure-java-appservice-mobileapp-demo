@@ -211,6 +211,8 @@ jobs:
           path: |
             deploy/app.jar
             deploy/.kosli_ignore
+          # Dotfiles are excluded by default, which silently drops .kosli_ignore.
+          include-hidden-files: true
           if-no-files-found: error
 
   # ------------------------------------------------------------------- 4. The mobile apps
