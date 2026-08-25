@@ -148,7 +148,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # -------------------------------------------------------------------- 1. Peer review
-      - name: Attest the peer review evidence
+      - name: Gather the peer review evidence
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -156,15 +156,11 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --commit "$GITHUB_SHA" \
             --out peer-review.json
-          kosli attest custom \
-            --name "$ARTIFACT_NAME.peer-review" \
-            --type peer-review \
-            --attestation-data peer-review.json
 
-      # The peer-review type carries no compliance-deciding jq rules any more - the judgment
-      # is made here by kosli/policies/peer-review.rego, against the same facts, and recorded
-      # as a decision against the `peer-review` control. peer-review-decision is in the flow
-      # template (order-system-ci.yml), so a bad peer review fails trail-compliance - and so
+      # The facts never reach Kosli as an attestation of their own - kosli/policies/peer-review.rego
+      # judges peer-review.json directly, and the verdict is recorded as a decision against
+      # the `peer-review` control. peer-review-decision is in the flow template
+      # (order-system-ci.yml), so a bad peer review fails trail-compliance - and so
       # publish-gate - as soon as this job finishes, same as unit-tests or mutation-tests.
       - name: Evaluate and record the peer review control decision
         run: |
@@ -287,7 +283,7 @@ jobs:
 
   # ------------------------------------------------------------------------- 5. Publish gate
   publish-gate:
-    name: May this component be published?
+    name: Can the system be released to staging?
     runs-on: ubuntu-latest
     needs: backend
     steps:
@@ -331,7 +327,7 @@ jobs:
 
   # ------------------------------------------------------------------------- 6. Release gate
   release-gate:
-    name: May this release go out?
+    name: Can the system be released to Production?
     runs-on: ubuntu-latest
     needs: [backend, mobile, publish-gate]
     # Without required reviewers on this environment the job does not wait, and there is

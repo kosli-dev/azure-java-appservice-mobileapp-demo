@@ -21,8 +21,9 @@ artifacts:
   # the integration test run and the approval exist, so requiring the whole trail would
   # always block. The component's own controls are what it judges.
   attestations:
-    - name: peer-review
-      type: custom:peer-review
+    - name: peer-review-decision
+      type: decision
+      for_control: peer-review
 
     - name: unit-tests
       type: junit

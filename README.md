@@ -34,7 +34,7 @@ Between them they cover points 1, 2 and 3 of the customer's demo scenario.
 
 | Capability asked for | How it works here | Where to look |
 | --- | --- | --- |
-| Evaluate the pull request for a peer review | `pull_request` attestation for the raw evidence, plus a `peer-review` custom attestation whose jq rules require two distinct approvers **or** one approver who wrote none of the code | [`scripts/peer_review_attestation.py`](scripts/peer_review_attestation.py), [`scripts/bootstrap_kosli.sh`](scripts/bootstrap_kosli.sh) |
+| Evaluate the pull request for a peer review | `pull_request` attestation for the raw evidence, plus a `peer-review` control judged by a Rego policy against local evidence: two distinct approvers **or** one approver who wrote none of the code | [`scripts/peer_review_attestation.py`](scripts/peer_review_attestation.py), [`kosli/policies/peer-review.rego`](kosli/policies/peer-review.rego) |
 | Evaluate a SonarQube quality gate | A real SonarCloud scan runs in CI; SonarCloud attests the quality-gate result straight to the trail via Kosli's built-in `sonar` attestation type, over the webhook configured on the Sonar project | [`sonar-project.properties`](sonar-project.properties), [`.github/workflows/ci-build.yml`](.github/workflows/ci-build.yml) |
 | Create a waiver for mutation testing | PIT results are attested with the threshold they are judged against. The score is below threshold on purpose, so the gate blocks — then the failure is waived with a recorded reason | [`scripts/waive_attestation.sh`](scripts/waive_attestation.sh), [`.github/workflows/waive-attestation.yml`](.github/workflows/waive-attestation.yml) |
 | Check if this component may be published, and show how the policy is created | `kosli assert artifact` in its own pipeline job, against the flow template; the release gate then asserts a policy created from a YAML file in this repo | [`kosli/flow-templates/order-system-ci.yml`](kosli/flow-templates/order-system-ci.yml), [`kosli/policies/release-gate.yml`](kosli/policies/release-gate.yml) |
@@ -84,7 +84,7 @@ Nothing in this repo decides pass or fail. The scripts collect facts; Kosli eval
 
 | Control | Rule, evaluated by Kosli |
 | --- | --- |
-| `peer-review` | `.pull_request_url != null` and `(.distinct_approvers >= 2) or (.independent_approval == true)` |
+| `peer-review` | Rego policy ([`kosli/policies/peer-review.rego`](kosli/policies/peer-review.rego)), evaluated with `kosli evaluate input` against local evidence: `.pull_request_url != null` and `(.distinct_approvers >= 2) or (.independent_approval == true)` |
 | `sonar-quality-gate` | Kosli's built-in `sonar` attestation type: the SonarQube quality gate must pass |
 | `mutation-tests` | `.total_mutations > 0` and `.mutation_score >= .threshold` |
 | `unit-tests` | built-in `junit` attestation type |
@@ -92,11 +92,13 @@ Nothing in this repo decides pass or fail. The scripts collect facts; Kosli eval
 | `integration-tests` | `.total > 0`, `.failed == 0` and `.errors == 0` — a run that fell over is not a pass either |
 | `release-approval` | `.state == "approved"` and `.user.login != ""` — a named human approved the release |
 
-Those rules live on the attestation types — the custom ones in `scripts/bootstrap_kosli.sh`,
-`sonar` built into Kosli — so they apply to every component that uses the type: change a
-custom rule once, every pipeline is judged by the new one. The flow template says which
-controls the system needs; the two policies say what it takes to be published and to be
-released.
+Most of those rules live on the attestation types — the custom ones in
+`scripts/bootstrap_kosli.sh`, `sonar` built into Kosli — so they apply to every component that
+uses the type: change a custom rule once, every pipeline is judged by the new one.
+`peer-review` is the exception: it is a control, judged by
+[`kosli/policies/peer-review.rego`](kosli/policies/peer-review.rego) rather than a type's jq
+rules. The flow template says which controls the system needs; the two policies say what it
+takes to be published and to be released.
 
 ## Setup
 
@@ -111,8 +113,8 @@ Repository secret:
 Then run the **Bootstrap Kosli** workflow from the Actions tab (or `./scripts/bootstrap_kosli.sh`
 locally with `KOSLI_ORG` and `KOSLI_API_TOKEN` set — the Kosli CLI only recognizes the token
 from an env var named `KOSLI_API_TOKEN`, so the workflows map the `KOSLI_PUBLIC_API_TOKEN`
-secret onto it). It creates the five custom attestation types and the `publish-gate` and `release-gate`
-policies.
+secret onto it). It creates the four custom attestation types, the `peer-review` control, and
+the `publish-gate` and `release-gate` policies.
 
 > The attestation types are org-level objects. If `kosli-public` already has a type with one
 > of these names, run `kosli list attestation-types` first — re-running the bootstrap would
