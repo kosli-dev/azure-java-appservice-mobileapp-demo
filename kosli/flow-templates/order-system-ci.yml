@@ -23,12 +23,12 @@ trail:
   artifacts:
     - name: orders-api
       attestations:
-        # kosli/policies/peer-review.rego evaluated against peer-review.json (gathered by the
-        # build but never attested in its own right), recorded with `kosli attest decision
-        # --control peer-review`. Unlike integration-tests/release-approval, this is produced
-        # in the same job as the evidence it judges, so it belongs here rather than in
-        # release-gate.yml - a bad peer review fails the trail (and so publish-gate) as soon
-        # as the build finishes.
+        # kosli/policies/peer-review.rego evaluated against the pull-request attestation above
+        # (fetched back with `kosli get attestation`, never a second attestation in its own
+        # right), recorded with `kosli attest decision --control peer-review`. Unlike
+        # integration-tests/release-approval, this is produced in the same job as the evidence
+        # it judges, so it belongs here rather than in release-gate.yml - a bad peer review
+        # fails the trail (and so publish-gate) as soon as the build finishes.
         - name: peer-review-decision
           type: decision
         - name: unit-tests

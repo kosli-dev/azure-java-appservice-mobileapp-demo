@@ -34,7 +34,7 @@ Between them they cover points 1, 2 and 3 of the customer's demo scenario.
 
 | Capability asked for | How it works here | Where to look |
 | --- | --- | --- |
-| Evaluate the pull request for a peer review | `pull_request` attestation for the raw evidence, plus a `peer-review` control judged by a Rego policy against local evidence: two distinct approvers **or** one approver who wrote none of the code | [`scripts/peer_review_attestation.py`](scripts/peer_review_attestation.py), [`kosli/policies/peer-review.rego`](kosli/policies/peer-review.rego) |
+| Evaluate the pull request for a peer review | `pull_request` attestation for the raw evidence, plus a `peer-review` control judged by a Rego policy against that same attestation's data, fetched back from Kosli: two distinct approvers **or** one approver who wrote none of the code | [`kosli/policies/peer-review.rego`](kosli/policies/peer-review.rego) |
 | Evaluate a SonarQube quality gate | A real SonarCloud scan runs in CI; SonarCloud attests the quality-gate result straight to the trail via Kosli's built-in `sonar` attestation type, over the webhook configured on the Sonar project | [`sonar-project.properties`](sonar-project.properties), [`.github/workflows/ci-build.yml`](.github/workflows/ci-build.yml) |
 | Create a waiver for mutation testing | PIT results are attested with the threshold they are judged against. The score is below threshold on purpose, so the gate blocks — then the failure is waived with a recorded reason | [`scripts/waive_attestation.sh`](scripts/waive_attestation.sh), [`.github/workflows/waive-attestation.yml`](.github/workflows/waive-attestation.yml) |
 | Check if this component may be published, and show how the policy is created | `kosli assert artifact` in its own pipeline job, against the flow template; the release gate then asserts a policy created from a YAML file in this repo | [`kosli/flow-templates/order-system-ci.yml`](kosli/flow-templates/order-system-ci.yml), [`kosli/policies/release-gate.yml`](kosli/policies/release-gate.yml) |
@@ -65,7 +65,6 @@ oversecured/report-{pass,fail}.json  the Oversecured scan reports (only pass is 
 Makefile                           scan and package the mobile app (Docker, no toolchain)
 
 scripts/bootstrap_kosli.sh         creates the attestation types and the policy
-scripts/peer_review_attestation.py collects pull-request review facts
 scripts/mutation_attestation.py    turns the PIT XML report into attestation data
 scripts/waive_attestation.sh       records a waiver (override) with a reason
 
@@ -84,7 +83,7 @@ Nothing in this repo decides pass or fail. The scripts collect facts; Kosli eval
 
 | Control | Rule, evaluated by Kosli |
 | --- | --- |
-| `peer-review` | Rego policy ([`kosli/policies/peer-review.rego`](kosli/policies/peer-review.rego)), evaluated with `kosli evaluate input` against local evidence: `.pull_request_url != null` and `(.distinct_approvers >= 2) or (.independent_approval == true)` |
+| `peer-review` | Rego policy ([`kosli/policies/peer-review.rego`](kosli/policies/peer-review.rego)), evaluated with `kosli evaluate input` against the trail's own `pull-request` attestation data (fetched back with `kosli get attestation`): a pull request exists, and either two distinct approvers or one who wrote none of the code |
 | `sonar-quality-gate` | Kosli's built-in `sonar` attestation type: the SonarQube quality gate must pass |
 | `mutation-tests` | `.total_mutations > 0` and `.mutation_score >= .threshold` |
 | `unit-tests` | built-in `junit` attestation type |
