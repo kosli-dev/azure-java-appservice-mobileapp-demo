@@ -490,11 +490,18 @@ that line: it is why the mobile half needs no toolchain installed.
   all three subjects; re-run it after adding an environment. It also grants Contributor on
   both resource groups, so run `infra/deploy.sh staging` **before** it — a role assignment on
   a resource group that does not exist fails.
-- **The repo rename left stale federated credentials behind.** The subjects created before
-  the move from `azure-java-appservice-demo` no longer match the OIDC token's repo name; the
-  re-run added the current ones, and the old name-based pair is harmless leftovers. The
-  `gha-immutable-environment-production` credential uses numeric org/repo IDs, which survive
-  a rename, so that path never broke.
+- **This org sends the *immutable* OIDC subject format**, and it is not rename-proof.
+  Observed on the first `deploy-staging` run (2026-08-25, run 32835421019): GitHub presented
+  `repo:kosli-dev@60883186/azure-java-appservice-mobileapp-demo@1341642300:environment:staging`
+  and Entra rejected it with `AADSTS700213`, because the credential said
+  `repo:kosli-dev/azure-java-appservice-mobileapp-demo:environment:staging`. The immutable
+  format embeds the numeric org and repo IDs *alongside* the names, so a rename breaks it
+  exactly like the name-based one - the pre-rename `gha-immutable-environment-production`
+  credential was dead too, which would have failed the production deploy a few jobs later.
+  Which format GitHub sends is an org setting, so `setup-github-oidc.sh` now creates both for
+  each of the three claims (six credentials), and needs `gh` authenticated to read the IDs.
+  After any repository or organisation rename, re-run it and delete the old-name credentials.
+  The tell is `AADSTS700213` quoting a subject with `@<id>` in it.
 - **The trail is the commit SHA**, which the manually-run integration test workflow takes as
   its `commit` input. One trail per push to `main`, so a re-run of a build reuses its trail
   and its attestations.
