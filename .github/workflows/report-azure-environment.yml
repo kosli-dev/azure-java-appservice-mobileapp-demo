@@ -1,14 +1,13 @@
 name: Report Azure environment
 
-# Reports what is actually running in Azure App Service to a Kosli environment, so Kosli can
-# compare running software against what the pipeline approved. This is the groundwork for the
-# deployment gate (point 4 of the customer demo scenario) - it is what makes
-# `kosli assert snapshot` and the environments' policies meaningful.
+# The periodic sweep: reports what is running in both App Service environments to Kosli, so
+# Kosli can compare running software against what the pipeline approved even when nothing is
+# being deployed. The pipeline reports its own snapshots straight after each deploy, by calling
+# the same reusable workflow.
 #
-# Optional: it only runs when the repository variable REPORT_AZURE_ENV is set to 'true' and
-# the Azure service-principal secrets below exist. `kosli snapshot azure` needs a client
-# secret (it calls the Azure management API directly), so this uses a service principal
-# rather than the OIDC login used for deployment.
+# Optional: the schedule only runs when the repository variable REPORT_AZURE_ENV is set to
+# 'true', which is how the periodic reporting is turned off. That guard is deliberately not on
+# the pipeline's own snapshot jobs - those are part of the release story, not the sweep.
 
 on:
   schedule:
@@ -18,37 +17,9 @@ on:
 permissions:
   contents: read
 
-env:
-  KOSLI_ORG: kosli-public
-  KOSLI_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}
-
 jobs:
   snapshot:
     if: ${{ vars.REPORT_AZURE_ENV == 'true' }}
-    runs-on: ubuntu-latest
-    # `kosli snapshot azure` snapshots a whole resource group and cannot filter by app, which
-    # is why each environment has its own resource group - one leg, one Kosli environment.
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - kosli-environment: ${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }}
-            resource-group: ${{ vars.AZURE_RESOURCE_GROUP }}
-          - kosli-environment: ${{ vars.KOSLI_ENVIRONMENT_STAGING || 'azure-appservice-staging' }}
-            resource-group: ${{ vars.AZURE_RESOURCE_GROUP_STAGING }}
-    name: Snapshot ${{ matrix.kosli-environment }}
-    steps:
-      - name: Setup Kosli CLI
-        uses: kosli-dev/setup-cli-action@v5
-        with:
-          version: "2"
-
-      - name: Snapshot the App Service environment
-        run: |
-          kosli snapshot azure "${{ matrix.kosli-environment }}" \
-            --azure-client-id "${{ secrets.AZURE_CLIENT_ID }}" \
-            --azure-client-secret "${{ secrets.AZURE_CLIENT_SECRET }}" \
-            --azure-tenant-id "${{ secrets.AZURE_TENANT_ID }}" \
-            --azure-subscription-id "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            --azure-resource-group-name "${{ matrix.resource-group }}" \
-            --digests-source logs --debug
+    name: Snapshot
+    uses: ./.github/workflows/snapshot-azure-environment.yml
+    secrets: inherit

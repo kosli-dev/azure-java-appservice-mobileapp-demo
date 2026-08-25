@@ -396,6 +396,33 @@ name for this control set (provenance, review, tests, static analysis);
 named only the human half and left the integration test run unaccounted for. Do not rename
 them back, and keep gate names for the two things that really are gates.
 
+**Each deploy reports its environment's snapshot before anything else is reported**
+(customer's call, 2026-08-25). `snapshot-after-staging` sits between `deploy-staging` and
+`report-integration-tests`, and `snapshot-after-production` after `deploy`, so an artifact's
+history reads
+built → attested → running in staging → tested → approved → running in production. Without
+them the only snapshots came from the 15-minute schedule, which could land the "started
+running in staging" event *after* the integration test result and the approval - a sequence
+that reads backwards for something whose whole point is the order of events.
+
+Both jobs report *both* environments, including the one that cannot have changed: a snapshot
+of an unchanged resource group reports the same state again, so there is nothing to gain from
+parameterising the call by which deploy it follows - and nothing to get wrong either, since
+neither caller passes a resource group. The matrix lives in the reusable workflow.
+
+They are `workflow_call` jobs against `.github/workflows/snapshot-azure-environment.yml`, not
+`gh workflow run` dispatches like the integration test report. That is the whole reason the
+reusable workflow exists: `needs:` on a called workflow is synchronous, so the pipeline knows
+the snapshot landed before it moves on, and a dispatch cannot promise that at all - it returns
+as soon as the run is queued. It also keeps `AZURE_CLIENT_SECRET` out of the deploy jobs;
+`kosli snapshot azure` calls the Azure management API directly and has no OIDC path, so the
+secret has to exist somewhere, but it need not exist in the job that also holds the deploy
+credentials. `report-azure-environment.yml` is now just the periodic sweep: it keeps the
+matrix and the `REPORT_AZURE_ENV` guard (which is how the *schedule* is turned off) and calls
+the same reusable workflow, so the pipeline and the sweep cannot drift. The pipeline's own
+snapshot jobs are deliberately **not** guarded on that variable - they are part of the release
+story, not the sweep.
+
 **The integration test report auto-triggers after staging deploy, but stays a workflow_dispatch
 workflow too** (2026-08-25). `deploy-staging`'s last step calls `gh workflow run
 report-integration-test-result.yml -f commit="$KOSLI_TRAIL"` (needs `actions: write` on that

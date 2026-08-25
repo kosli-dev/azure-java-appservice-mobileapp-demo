@@ -9,12 +9,18 @@ and carries the whole system to production:
 
 ```
                  ┌─ backend ──────────── publish gate ─┐
-begin the trail ─┼─ mobile (android) ──────────────────┼─ deploy to staging ─ release gate ─ deploy
+begin the trail ─┼─ mobile (android) ──────────────────┼─ deploy to staging ─ snapshot ─
                  └─ mobile (ios) ──────────────────────┘
+
+  ─ integration tests ─ release gate ─ deploy ─ snapshot
 ```
 
-with the integration test report and the approval landing between the staging deploy and the
-release gate.
+The two snapshot steps report both environments immediately after either one changes, so the
+artifact's history in Kosli reads in the order things happened — built and attested, running
+in staging, tested, approved, running in production — rather than wherever the periodic
+sweep's schedule happens to fall. Re-reporting the environment that cannot have changed costs
+nothing, so neither call has to say which deploy it follows. The approval lands on the release
+gate.
 
 Everything lands on one Kosli flow, `order-system-ci`, whose trail is the commit:
 
@@ -76,7 +82,8 @@ scripts/waive_attestation.sh       records a waiver (override) with a reason
 .github/workflows/pr.yml           fast checks on the pull request
 .github/workflows/kosli-bootstrap.yml   run the bootstrap script from the Actions tab
 .github/workflows/waive-attestation.yml waive a blocked control from the Actions tab
-.github/workflows/report-azure-environment.yml  report what is running in Azure (optional)
+.github/workflows/snapshot-azure-environment.yml  report both environments (called, not triggered)
+.github/workflows/report-azure-environment.yml  the periodic sweep (optional)
 ```
 
 ### Where compliance is decided
@@ -176,7 +183,7 @@ Optional variables that tune the demo without editing code:
 | --- | --- | --- |
 | `MUTATION_THRESHOLD` | `85` | Mutation score the component must reach. The service scores ~76%, so the default blocks the publish gate. Set it to `70` for a clean run. |
 | `KOSLI_DRY_RUN` | unset | Set to `true` to run the pipeline without sending anything to Kosli. |
-| `REPORT_AZURE_ENV` | unset | Set to `true` to enable the scheduled Azure environment reporting (both environments). |
+| `REPORT_AZURE_ENV` | unset | Set to `true` to enable the *periodic* Azure environment sweep. The pipeline's own snapshots, after each deploy, are not gated on it. |
 | `INTEGRATION_TEST_DEFAULT_RESULT` | unset (falls back to `pass`) | Which canned report `deploy-staging`'s auto-triggered **Report integration test result** run sends when nobody picks `pass`/`fail` by hand. Set to `fail` to have the release gate block by default. |
 
 GitHub environments gate four jobs: `production-release` the release gate, `production` the
