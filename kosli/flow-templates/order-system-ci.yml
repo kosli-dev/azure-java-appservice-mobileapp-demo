@@ -23,9 +23,16 @@ trail:
   artifacts:
     - name: orders-api
       attestations:
-        # Peer review control: evaluated by the jq rules on the `peer-review` type.
+        # Raw peer-review evidence - no compliance-deciding jq rules on this type any more.
         - name: peer-review
           type: custom:peer-review
+        # The peer-review control decision: kosli/policies/peer-review.rego evaluated against
+        # the evidence above, recorded with `kosli attest decision --control peer-review`.
+        # Unlike integration-tests/release-approval, this is produced in the same job as the
+        # evidence it judges, so it belongs here rather than in release-gate.yml - a bad peer
+        # review fails the trail (and so publish-gate) as soon as the build finishes.
+        - name: peer-review-decision
+          type: decision
         - name: unit-tests
           type: junit
         # SonarQube quality gate, attested straight from SonarCloud via its Kosli webhook.

@@ -2,10 +2,11 @@
 """Collect peer-review facts about the pull request that produced a merge commit.
 
 The script only *reports facts*. Whether those facts amount to a peer review is decided by
-the jq evaluation rules on the `peer-review` custom attestation type in Kosli:
+kosli/policies/peer-review.rego, evaluated against this same JSON with `kosli evaluate input`
+and recorded as a decision against the `peer-review` control:
 
-    .pull_request_url != null
-    (.distinct_approvers >= 2) or (.independent_approval == true)
+    input.pull_request_url != null
+    input.distinct_approvers >= 2 or input.independent_approval == true
 
 This mirrors the "never alone" code-review control Kosli ships in
 https://github.com/kosli-dev/control-actions : a change is peer reviewed if two different
