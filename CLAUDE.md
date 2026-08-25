@@ -14,10 +14,11 @@ A Kosli demo built for a customer evaluation. It covers **points 1, 2 and 3** of
   the report attested as a custom type whose jq rules are the gate. Merged in from the
   `mobile-app-example` repo; it was developed there and its git history lives there, where it
   used mobsfscan.
-- **Point 3** — a release process. An integration test run is reported to the trail by a
-  separate manual workflow (pass or fail, from canned JSON), and a protected GitHub
-  environment halts the pipeline until someone approves — after which Kosli, not the
-  approver, decides. Only once the release gate opens is the build deployed to App Service.
+- **Point 3** — a release process. Clearing the publish gate deploys the build to a staging
+  App Service; an integration test run is then reported to the trail by a separate manual
+  workflow (pass or fail, from canned JSON), and a protected GitHub environment halts the
+  pipeline until someone approves — after which Kosli, not the approver, decides. Only once
+  the release gate opens is the same build deployed to the production App Service.
 
 Kosli org: `kosli-public`.
 
@@ -65,6 +66,18 @@ one from the environment and collided with `--trail`. Fixed by clearing
 against `kosli-public` directly - unset and empty-string behave the same; a real, non-empty
 value is what triggers the conflict). See the matching Gotcha below. Not yet re-run to confirm
 the fix goes green; that is the next live run to check.
+
+For the staging environment, verified live against Azure (2026-08-25): the staging resource
+group, plan and web app were created for real by `infra/deploy.sh staging` in subscription
+`96cdee58-1fa8-419d-a65a-7233b3465632` ("Steve Test"), where production already existed;
+`az role assignment list` shows Contributor on both resource groups, and
+`az ad app federated-credential list` shows the current repo name's subjects. `actionlint` and
+`shellcheck` are clean on the workflow and script changes (both run in Docker - neither binary,
+nor `az`, nor `bicep` is installed in the agent's sandbox, so `bicep build` was **not** re-run
+against the edited `main.bicep`; `az deployment group create` accepting it is the evidence
+there). The pipeline half has not run: no `deploy-staging` job has ever executed, so the
+composite action, the OIDC login from a `staging`-environment job and the staging smoke test
+are all unproven.
 
 Verified before pushing:
 
@@ -326,6 +339,38 @@ principled — the rules already pin the parts of the shape they depend on.
 downloads the artifact the gates approved rather than rebuilding, so the fingerprint that
 reaches App Service is the one Kosli judged. Nothing else in the repo deploys.
 
+**Staging sits between the two gates** (customer's call, 2026-08-25). `deploy-staging` needs
+`[backend, publish-gate]`, and `release-gate` gained `needs: deploy-staging`, so the order is
+publish-gate → staging → approval → release-gate → production. Staging is gated by
+publish-gate alone: no `--policy`, no second assert. That is deliberate — publish-gate already
+asks "did the build produce everything it owed?", which is exactly the bar for reaching the
+place where the integration tests are supposed to run, and a policy that could block staging
+would block the very testing whose result the release gate then requires. The staging Kosli
+environment gets no attached policy for the same reason; `prod-deploy-gate` stays on
+production only.
+
+**Each environment gets its own Azure resource group.** `kosli snapshot azure` snapshots a
+whole resource group and has no way to filter by app (checked against CLI v2.38.0 — the only
+scoping flag is `--azure-resource-group-name`), so two web apps in one group would report into
+one Kosli environment and could never be gated apart. Hence `rg-kosli-orders-api-demo` /
+`rg-kosli-orders-api-demo-staging`, one `kosli snapshot azure` leg each, and
+`main.bicep`'s `environment` param (`prod`|`staging`) which only tags resources —
+`infra/deploy.sh <env>` derives both names from it. Deployment *slots* were the other option
+and were rejected twice over: they need a Standard-tier plan (B1 does not support them), and
+`kosli snapshot azure` documents nothing about enumerating slots, so staging would likely be
+invisible to Kosli.
+
+**The two deploy jobs share a composite action, and are two jobs rather than a matrix.**
+`.github/actions/deploy-appservice` holds download → OIDC login → deploy → smoke test; the
+jobs differ in `needs` and `environment`, neither of which can be driven from a matrix value,
+so a matrix would not have worked. A consequence: both deploy jobs now run
+`actions/checkout` (a local composite action is unreachable without one), where the production
+job previously had none. That is fingerprint-safe — the only tracked file under `deploy/` is
+`.kosli_ignore`, and the artifact already carries it byte-identical because the upload sets
+`include-hidden-files: true` — but it does mean the deployed content is no longer *only* what
+the artifact contains, so anything new tracked under `deploy/` has to stay identical to what
+was fingerprinted.
+
 **There is no GitHub release object** (customer's call, 2026-08-24). `gh release create` needs
 a tag and the pipeline is triggered by a push to `main`, so publishing a release would have
 meant inventing a tag per build. Kosli holds the record of what was approved; GitHub holds
@@ -437,6 +482,19 @@ that line: it is why the mobile half needs no toolchain installed.
 - **The deploy job uses the `production` environment, the release gate uses
   `production-release`.** Two environments on purpose: the halt belongs to the gate, and
   `production` carries the deployment URL that shows up in the Actions UI.
+- **`staging` must be left unprotected.** Required reviewers on it would put a second human
+  halt before the integration tests, which is not what point 3 is about.
+- **A job with `environment:` gets an environment-scoped OIDC subject**, not the branch one,
+  so `deploy-staging` needs its own federated credential
+  (`repo:<repo>:environment:staging`) or `azure/login` fails. `setup-github-oidc.sh` creates
+  all three subjects; re-run it after adding an environment. It also grants Contributor on
+  both resource groups, so run `infra/deploy.sh staging` **before** it — a role assignment on
+  a resource group that does not exist fails.
+- **The repo rename left stale federated credentials behind.** The subjects created before
+  the move from `azure-java-appservice-demo` no longer match the OIDC token's repo name; the
+  re-run added the current ones, and the old name-based pair is harmless leftovers. The
+  `gha-immutable-environment-production` credential uses numeric org/repo IDs, which survive
+  a rename, so that path never broke.
 - **The trail is the commit SHA**, which the manually-run integration test workflow takes as
   its `commit` input. One trail per push to `main`, so a re-run of a build reuses its trail
   and its attestations.
@@ -469,8 +527,10 @@ enabled for this organization"). Enable the Sonar integration in the
 Kosli app (org-level) and put its webhook URL/secret on the SonarCloud project; secret
 `SONAR_TOKEN` for the scan step, and turn off SonarCloud's Automatic Analysis for the project.
 Add required reviewers to the `production-release` GitHub environment, or the release never
-halts. Azure: `infra/deploy.sh` then `infra/setup-github-oidc.sh`, which prints the three
-`AZURE_*` secrets; set vars `AZURE_WEBAPP_NAME` and `AZURE_RESOURCE_GROUP`. Optional vars
+halts; leave `staging` unprotected. Azure: `infra/deploy.sh` and `infra/deploy.sh staging`,
+then `infra/setup-github-oidc.sh` (with `GITHUB_REPO` set to the current repo name), which
+prints the three `AZURE_*` secrets; set vars `AZURE_WEBAPP_NAME`, `AZURE_RESOURCE_GROUP`,
+`AZURE_WEBAPP_NAME_STAGING` and `AZURE_RESOURCE_GROUP_STAGING`. Optional vars
 `MUTATION_THRESHOLD`, `KOSLI_DRY_RUN`, `REPORT_AZURE_ENV` tune the demo without code changes —
 `MUTATION_THRESHOLD=70` gives a clean run with no waiver needed.
 
@@ -483,6 +543,8 @@ halts. Azure: `infra/deploy.sh` then `infra/setup-github-oidc.sh`, which prints 
   `integration-tests/`. A suite that actually drives the deployed backend from the mobile
   clients replaces one workflow step; the type, the template and the gate stay as they are.
 - **Point 4** — deployment gate: `kosli/policies/prod-deploy-gate.yml` exists but is not
-  attached. Enable `REPORT_AZURE_ENV`, run the bootstrap with *create environment* checked,
+  attached. Both environments are snapshotted (the workflow is matrixed over the two
+  resource groups) but only production is meant to carry the policy.
+  Enable `REPORT_AZURE_ENV`, run the bootstrap with *create environment* checked,
   and the policy starts judging what is actually running in App Service. Note `kosli snapshot
   azure` needs a service-principal **client secret**, not the OIDC login the deploy job uses.

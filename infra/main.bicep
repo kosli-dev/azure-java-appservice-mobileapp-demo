@@ -1,11 +1,14 @@
 // Azure App Service (Linux, Java SE) for the orders-api demo component.
 //
+// One resource group per environment: `kosli snapshot azure` snapshots a whole resource
+// group, so keeping staging and prod apart is what lets each be its own Kosli environment.
+//
 // Deploy with:
 //   az group create -n rg-kosli-orders-api-demo -l westeurope
 //   az deployment group create -g rg-kosli-orders-api-demo -f infra/main.bicep \
-//      -p webAppName=kosli-orders-api-demo
+//      -p webAppName=kosli-orders-api-demo environment=prod
 //
-// Or just run infra/deploy.sh.
+// Or just run infra/deploy.sh [prod|staging].
 
 @description('Globally unique name of the web app. Becomes https://<name>.azurewebsites.net')
 param webAppName string
@@ -26,10 +29,18 @@ param sku string = 'B1'
 @description('Java runtime for the built-in Java SE container.')
 param javaVersion string = '21'
 
+@description('Which deployment environment these resources make up.')
+@allowed([
+  'prod'
+  'staging'
+])
+param environment string = 'prod'
+
 @description('Tags applied to every resource.')
 param tags object = {
   purpose: 'kosli-demo'
   component: 'orders-api'
+  environment: environment
   managedBy: 'bicep'
 }
 
@@ -114,3 +125,4 @@ output webAppName string = webApp.name
 output webAppUrl string = 'https://${webApp.properties.defaultHostName}'
 output healthUrl string = 'https://${webApp.properties.defaultHostName}/api/health'
 output resourceGroupName string = resourceGroup().name
+output environment string = environment

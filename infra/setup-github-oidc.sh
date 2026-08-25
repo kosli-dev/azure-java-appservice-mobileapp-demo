@@ -6,6 +6,9 @@
 # Usage:
 #   GITHUB_REPO=kosli-dev/azure-java-appservice-demo ./infra/setup-github-oidc.sh
 #
+# Grants Contributor on every environment's resource group, so run infra/deploy.sh for both
+# environments first - a role assignment on a resource group that does not exist yet fails.
+#
 # Requires: az CLI (logged in, with permission to create app registrations), gh CLI
 # (optional - used to set the repository secrets for you).
 set -euo pipefail
@@ -13,6 +16,7 @@ set -euo pipefail
 GITHUB_REPO="${GITHUB_REPO:-kosli-dev/azure-java-appservice-demo}"
 APP_NAME="${APP_NAME:-kosli-orders-api-demo-gha}"
 RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-rg-kosli-orders-api-demo}"
+RESOURCE_GROUP_STAGING="${AZURE_RESOURCE_GROUP_STAGING:-rg-kosli-orders-api-demo-staging}"
 
 SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
 TENANT_ID="$(az account show --query tenantId -o tsv)"
@@ -27,15 +31,22 @@ echo "clientId: $CLIENT_ID"
 echo "==> service principal"
 az ad sp show --id "$CLIENT_ID" -o none 2>/dev/null || az ad sp create --id "$CLIENT_ID" -o none
 
-echo "==> contributor on the resource group"
-az role assignment create \
-  --role Contributor \
-  --assignee "$CLIENT_ID" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}" \
-  -o none 2>/dev/null || echo "(role assignment already exists)"
+for group in "$RESOURCE_GROUP" "$RESOURCE_GROUP_STAGING"; do
+  echo "==> contributor on ${group}"
+  az role assignment create \
+    --role Contributor \
+    --assignee "$CLIENT_ID" \
+    --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${group}" \
+    -o none 2>/dev/null || echo "(role assignment already exists)"
+done
 
 echo "==> federated credentials for ${GITHUB_REPO}"
-for subject in "repo:${GITHUB_REPO}:ref:refs/heads/main" "repo:${GITHUB_REPO}:environment:production"; do
+# One subject per environment a job deploys from: a job with `environment:` gets an
+# environment-scoped subject, not the branch one, so a missing entry fails azure/login.
+for subject in \
+  "repo:${GITHUB_REPO}:ref:refs/heads/main" \
+  "repo:${GITHUB_REPO}:environment:production" \
+  "repo:${GITHUB_REPO}:environment:staging"; do
   name="gha-$(echo "$subject" | tr ':/' '--' | tr -cd '[:alnum:]-' | cut -c1-110)"
   az ad app federated-credential create --id "$CLIENT_ID" --parameters "{
     \"name\": \"${name}\",

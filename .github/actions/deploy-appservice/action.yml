@@ -1,0 +1,72 @@
+name: Deploy to Azure App Service
+description: Put the build the gates approved on an App Service web app, then wait for it to be healthy.
+
+# Shared by the staging and production deploy jobs. Neither rebuilds: both download the same
+# artifact the gates judged, so the fingerprint that reaches Azure is the one Kosli approved.
+#
+# The calling job needs `id-token: write` for the OIDC login, and the app registration needs
+# a federated credential for that job's environment - see infra/setup-github-oidc.sh.
+
+inputs:
+  app-name:
+    description: "Name of the App Service web app to deploy to"
+    required: true
+  artifact-name:
+    description: "Name of the workflow artifact holding the fingerprinted deploy directory"
+    required: false
+    default: orders-api-jar
+  azure-client-id:
+    description: "Azure client ID for the OIDC login"
+    required: true
+  azure-tenant-id:
+    description: "Azure tenant ID for the OIDC login"
+    required: true
+  azure-subscription-id:
+    description: "Azure subscription ID for the OIDC login"
+    required: true
+
+outputs:
+  webapp-url:
+    description: "URL of the deployed web app"
+    value: ${{ steps.deploy.outputs.webapp-url }}
+
+runs:
+  using: "composite"
+  steps:
+    # The same build the gate approved, byte for byte - not a rebuild.
+    - uses: actions/download-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: deploy
+
+    - name: Azure login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ inputs.azure-client-id }}
+        tenant-id: ${{ inputs.azure-tenant-id }}
+        subscription-id: ${{ inputs.azure-subscription-id }}
+
+    - name: Deploy
+      id: deploy
+      uses: azure/webapps-deploy@v3
+      with:
+        app-name: ${{ inputs.app-name }}
+        package: deploy
+
+    - name: Smoke test
+      shell: bash
+      env:
+        APP_NAME: ${{ inputs.app-name }}
+      run: |
+        URL="https://${APP_NAME}.azurewebsites.net/api/health"
+        for attempt in $(seq 1 30); do
+          if curl -fsS --max-time 10 "$URL"; then
+            echo
+            echo "orders-api is up"
+            exit 0
+          fi
+          echo "waiting for the app to start (attempt $attempt)..."
+          sleep 10
+        done
+        echo "app did not become healthy" >&2
+        exit 1
