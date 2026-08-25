@@ -2,7 +2,7 @@ name: Bootstrap Kosli
 
 # Creates (or updates) the org-level Kosli objects the pipeline depends on:
 #   * the custom attestation types, including the jq rules that decide compliance
-#   * the publish-gate policy that the CI/CD pipeline asserts against
+#   * the release-gate policy that the CI/CD pipeline asserts against
 #
 # Run it once before the first pipeline run, and again after editing anything under kosli/.
 # It is idempotent: Kosli versions the changed objects instead of duplicating them.
@@ -33,13 +33,15 @@ jobs:
         with:
           version: "2"
 
-      - name: Create attestation types and the publish-gate policy
+      - name: Create attestation types and the release-gate policy
         run: ./scripts/bootstrap_kosli.sh
 
       # One Kosli environment per Azure resource group, since that is the granularity
-      # `kosli snapshot azure` reports at. Only production carries the deploy gate: staging
-      # is where a build goes to be tested, so a policy blocking it would defeat the point.
-      - name: Create the Azure environments and attach the deploy gate
+      # `kosli snapshot azure` reports at. Both carry `secure-development` - the build-time
+      # controls, which exist by the time a build reaches staging. Only production also carries
+      # `production-readiness`, whose two controls arrive after the build; requiring those in
+      # staging would make it permanently non-compliant.
+      - name: Create the Azure environments and attach their policies
         if: ${{ inputs.create_environment }}
         env:
           KOSLI_ENVIRONMENT: ${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }}
@@ -51,10 +53,15 @@ jobs:
           kosli create environment "$KOSLI_ENVIRONMENT_STAGING" \
             --type azure-apps \
             --description "Azure App Service running orders-api in staging"
-          kosli create policy prod-deploy-gate kosli/policies/prod-deploy-gate.yml \
+          kosli create policy secure-development kosli/policies/secure-development.yml \
             --type env \
-            --description "Controls an artifact must satisfy to run in production"
-          kosli attach-policy prod-deploy-gate --environment "$KOSLI_ENVIRONMENT"
+            --description "What an artifact must have gone through to run in any environment"
+          kosli create policy production-readiness kosli/policies/production-readiness.yml \
+            --type env \
+            --description "What production requires on top of secure-development"
+          kosli attach-policy secure-development --environment "$KOSLI_ENVIRONMENT"
+          kosli attach-policy secure-development --environment "$KOSLI_ENVIRONMENT_STAGING"
+          kosli attach-policy production-readiness --environment "$KOSLI_ENVIRONMENT"
 
       - name: Show what exists now
         run: |

@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://docs.kosli.com/schemas/policy/v1.json
+#
+# Secure development: what any artifact must have gone through to run in any of the demo's
+# Azure environments, staging and production alike.
+#
+#   kosli create policy secure-development kosli/policies/secure-development.yml --type env
+#   kosli attach-policy secure-development --environment azure-appservice-staging
+#   kosli attach-policy secure-development --environment azure-appservice-prod
+#
+# It is the publish gate's control set: known provenance, a compliant trail, and the four
+# controls the build itself produces - which is everything that exists by the time a build
+# reaches staging. The two controls that arrive later - the integration test run and the
+# release approval - are production's business and live in production-readiness.yml.
+# Requiring them here would make staging permanently non-compliant, since a build lands on
+# staging minutes before either can exist.
+_schema: https://docs.kosli.com/schemas/policy/v1
+
+artifacts:
+  provenance:
+    required: true
+  trail-compliance:
+    required: true
+  attestations:
+    - name: peer-review-decision
+      type: decision
+      for_control: peer-review
+    - name: unit-tests
+      type: junit
+    - name: sonar-quality-gate
+      type: sonar
+    - name: mutation-tests
+      type: custom:mutation-testing
