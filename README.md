@@ -9,12 +9,12 @@ and carries the whole system to production:
 
 ```
                  ┌─ backend ──────────── publish gate ─┐
-begin the trail ─┼─ mobile (android) ──────────────────┼─ release gate ─ deploy
+begin the trail ─┼─ mobile (android) ──────────────────┼─ deploy to staging ─ release gate ─ deploy
                  └─ mobile (ios) ──────────────────────┘
 ```
 
-with the integration test report and the approval landing between the build and the release
-gate.
+with the integration test report and the approval landing between the staging deploy and the
+release gate.
 
 Everything lands on one Kosli flow, `order-system-ci`, whose trail is the commit:
 
@@ -39,10 +39,12 @@ Between them they cover points 1, 2 and 3 of the customer's demo scenario.
 | Create a waiver for mutation testing | PIT results are attested with the threshold they are judged against. The score is below threshold on purpose, so the gate blocks — then the failure is waived with a recorded reason | [`scripts/waive_attestation.sh`](scripts/waive_attestation.sh), [`.github/workflows/waive-attestation.yml`](.github/workflows/waive-attestation.yml) |
 | Check if this component may be published, and show how the policy is created | `kosli assert artifact` in its own pipeline job, against the flow template; the release gate then asserts a policy created from a YAML file in this repo | [`kosli/flow-templates/order-system-ci.yml`](kosli/flow-templates/order-system-ci.yml), [`kosli/policies/release-gate.yml`](kosli/policies/release-gate.yml) |
 
-Clearing the publish gate is not what puts the service on App Service: the deploy happens at
-the end of the pipeline, after the release gate (see
+Clearing the publish gate puts the service on the **staging** App Service, not the production
+one: the production deploy happens at the end of the pipeline, after the release gate (see
 [Point 3](#point-3--the-release-process)). The infrastructure is defined as Bicep in
-[`infra/`](infra).
+[`infra/`](infra), and each environment gets its own resource group — `kosli snapshot azure`
+snapshots a whole resource group, so sharing one would report staging and production into the
+same Kosli environment.
 
 ## The moving parts
 
@@ -69,6 +71,7 @@ scripts/mutation_attestation.py    turns the PIT XML report into attestation dat
 scripts/waive_attestation.sh       records a waiver (override) with a reason
 
 .github/workflows/ci-build.yml     the pipeline: build → attest → gates → deploy
+.github/actions/deploy-appservice/ deploy an approved build to one App Service web app
 .github/actions/get-github-workflow-approver/  reads back who approved a waiting job
 .github/workflows/report-integration-test-result.yml  report a run to a trail
 .github/workflows/pr.yml           fast checks on the pull request
@@ -143,13 +146,16 @@ Repository secret:
 
 ```bash
 az login
-AZURE_WEBAPP_NAME=kosli-orders-api-demo ./infra/deploy.sh
-GITHUB_REPO=kosli-dev/azure-java-appservice-demo ./infra/setup-github-oidc.sh
+./infra/deploy.sh                 # production
+./infra/deploy.sh staging
+GITHUB_REPO=kosli-dev/azure-java-appservice-mobileapp-demo ./infra/setup-github-oidc.sh
 ```
 
 The first script creates the resource group, the Linux App Service plan and the Java SE web
-app. The second creates an app registration with federated credentials so GitHub Actions can
-deploy without a stored password, and prints the three secrets to set.
+app — once per environment, each in its own resource group. Run it for both before the second
+script, which creates an app registration with federated credentials so GitHub Actions can
+deploy without a stored password, grants it Contributor on both resource groups, and prints
+the three secrets to set.
 
 | Secret | From |
 | --- | --- |
@@ -161,6 +167,8 @@ deploy without a stored password, and prints the three secrets to set.
 | --- | --- |
 | `AZURE_WEBAPP_NAME` | e.g. `kosli-orders-api-demo` |
 | `AZURE_RESOURCE_GROUP` | e.g. `rg-kosli-orders-api-demo` |
+| `AZURE_WEBAPP_NAME_STAGING` | e.g. `kosli-orders-api-demo-staging` |
+| `AZURE_RESOURCE_GROUP_STAGING` | e.g. `rg-kosli-orders-api-demo-staging` |
 
 Optional variables that tune the demo without editing code:
 
@@ -168,13 +176,15 @@ Optional variables that tune the demo without editing code:
 | --- | --- | --- |
 | `MUTATION_THRESHOLD` | `85` | Mutation score the component must reach. The service scores ~76%, so the default blocks the publish gate. Set it to `70` for a clean run. |
 | `KOSLI_DRY_RUN` | unset | Set to `true` to run the pipeline without sending anything to Kosli. |
-| `REPORT_AZURE_ENV` | unset | Set to `true` to enable the scheduled Azure environment reporting. |
+| `REPORT_AZURE_ENV` | unset | Set to `true` to enable the scheduled Azure environment reporting (both environments). |
 
-GitHub environments gate three jobs: `production-release` the release gate, `production` the
-deploy job, and `waivers` the waiver workflow. **Add required reviewers to
-`production-release`** — without them the pipeline runs straight through, there is nothing to
-halt, and the approval the release gate wants to attest never exists. Add them to the other
-two as well if you want to show four-eyes approval there.
+GitHub environments gate four jobs: `production-release` the release gate, `production` the
+production deploy, `staging` the staging deploy, and `waivers` the waiver workflow. **Add
+required reviewers to `production-release`** — without them the pipeline runs straight
+through, there is nothing to halt, and the approval the release gate wants to attest never
+exists. Leave `staging` unprotected: the halt belongs to production, and a build only reaches
+staging once the publish gate has already passed. Add reviewers to the others as well if you
+want to show four-eyes approval there.
 
 ## Running the orders-api demo
 
@@ -341,10 +351,10 @@ and judged clean, and a named human has approved the release.
 
 | Step | What you do | What happens |
 | --- | --- | --- |
-| 1 | Merge an approved pull request | **CI build** builds and attests everything — backend and both mobile apps in parallel — clears the publish gate, and stops at the `release-gate` job, which is waiting on the protected `production-release` environment. |
+| 1 | Merge an approved pull request | **CI build** builds and attests everything — backend and both mobile apps in parallel — clears the publish gate, deploys the build to the **staging** App Service, and stops at the `release-gate` job, which is waiting on the protected `production-release` environment. |
 | 2 | Run **Report integration test result** with the commit SHA and result `pass` or `fail` | One of the two canned runs under `integration-tests/` is attested to the trail as `integration-tests`. The workflow always succeeds — it reports facts. Kosli evaluates them. |
 | 3 | Approve `release-gate` in *Review deployments* | The job records **who approved it**, then runs `kosli assert artifact --policy release-gate`. If the integration test run was never reported, or was reported as failing, the gate fails and nothing is deployed. |
-| — | nothing | Once the gate opens, the exact JAR the gate approved is deployed to App Service and smoke-tested. |
+| — | nothing | Once the gate opens, the exact JAR the gate approved — the same one already on staging — is deployed to the production App Service and smoke-tested. |
 
 The point of step 3 is that pressing continue is **not** the decision. The approval only lets
 the job start; what the job does is ask Kosli. So the demo has two distinct failure modes to
@@ -383,16 +393,19 @@ mobileorders-android  build/mobileorders-android.zip  + Oversecured scan
 mobileorders-ios      build/mobileorders-ios.zip      + Oversecured scan
 ```
 
-The deploy job downloads the JAR the gates approved rather than rebuilding, so the fingerprint
-that reaches App Service is the one Kosli judged. Only the backend is deployed anywhere — the
-mobile artifacts exist to be gated, until there are real builds and a store to publish to.
+Both deploy jobs download the JAR the gates approved rather than rebuilding, so the
+fingerprint that reaches either App Service is the one Kosli judged. They share
+[`.github/actions/deploy-appservice`](.github/actions/deploy-appservice) and differ only in
+which web app they target and which gate they wait for. Only the backend is deployed anywhere
+— the mobile artifacts exist to be gated, until there are real builds and a store to publish
+to.
 
 ### The two gates
 
 | Gate | Judges | Against | Runs |
 | --- | --- | --- | --- |
-| publish gate | the backend's own controls: peer review, unit tests, Sonar, mutation testing | the flow template | right after the build, before anything human happens |
-| release gate | the whole trail, plus the integration test run and the approval | `release-gate` policy | after the approval, as the last thing before the deploy |
+| publish gate | the backend's own controls: peer review, unit tests, Sonar, mutation testing | the flow template | right after the build, before anything human happens — and it is what lets the build reach staging |
+| release gate | the whole trail, plus the integration test run and the approval | `release-gate` policy | after the approval, as the last thing before the production deploy |
 
 **No policy is involved in the publish gate.** `kosli assert artifact` with neither
 `--policy` nor `--environment` asserts the artifact against its flow template, and the
@@ -460,6 +473,8 @@ negation rather than ignoring `deploy/` outright.
 - **Point 4 (deployment gate):** enable `REPORT_AZURE_ENV`, run the Bootstrap workflow with
   *create environment* checked, and the `prod-deploy-gate` policy starts judging whatever is
   actually running in App Service — including anything that never went through the pipeline.
+  Both `azure-appservice-prod` and `azure-appservice-staging` are snapshotted; only production
+  carries the policy, since staging is where a build goes to be tested.
 
 ## Local development
 
