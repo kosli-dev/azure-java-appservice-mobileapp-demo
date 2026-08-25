@@ -17,6 +17,7 @@
       "platform": "android"
     },
     "severityCounts": {
+      "high": 0,
       "low": 53,
       "medium": 19
     },
