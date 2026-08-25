@@ -18,8 +18,9 @@ artifacts:
   trail-compliance:
     required: true
   attestations:
-    - name: peer-review
-      type: custom:peer-review
+    - name: peer-review-decision
+      type: decision
+      for_control: peer-review
     - name: unit-tests
       type: junit
     - name: sonar-quality-gate

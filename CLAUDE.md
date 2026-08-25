@@ -28,18 +28,20 @@ trail is the commit:
 
 | Artifact | Attestations |
 | --- | --- |
-| `orders-api` | `peer-review`, `peer-review-decision`, `unit-tests`, `sonar-quality-gate`, `mutation-tests` |
+| `orders-api` | `peer-review-decision`, `unit-tests`, `sonar-quality-gate`, `mutation-tests` |
 | `mobileorders-android` | `oversecured` |
 | `mobileorders-ios` | `oversecured` |
 | (trail level) | `pull-request`, `integration-tests`, `release-approval` |
 
-`orders-api.peer-review` is now evidence only (no compliance-deciding jq rules). The judgment
-moved to a control: `orders-api.peer-review-decision`, a `decision`-type attestation recording
-the verdict of `kosli/policies/peer-review.rego` against the `peer-review` control. Unlike
-`integration-tests` and `release-approval`, it *is* in the flow template, right alongside
-`peer-review` — it's produced in the same job as the evidence it judges, so nothing stops it
-being there, and being there means publish-gate blocks on a bad peer review again, the same as
-before the conversion.
+`orders-api.peer-review` is gone (customer's call, 2026-08-25): it had already been reduced to
+evidence only, with no compliance-deciding jq rules, once the judgment moved to a control —
+and evidence nobody reads back from Kosli doesn't need to be attested. The facts are still
+gathered by `scripts/peer_review_attestation.py` into `peer-review.json`, but that file is now
+only ever read locally, by `kosli evaluate input --policy kosli/policies/peer-review.rego` in
+the same job. The verdict is recorded as `orders-api.peer-review-decision`, a `decision`-type
+attestation against the `peer-review` control. It *is* in the flow template — it's produced in
+the same job as the evidence it judges, so nothing stops it being there, and being there means
+publish-gate blocks on a bad peer review, same as before.
 
 Template: `kosli/flow-templates/order-system-ci.yml`. The `orders-api-ci`, `mobileorders` and
 `order-system-release` flows still exist in `kosli-public` with their history; nothing writes
@@ -128,32 +130,42 @@ Not verified, and the first live run is the test of it:
 
 ## Design decisions worth not re-litigating
 
-**Peer review is a custom attestation type, not just `pull_request`.** The native
-`pull_request` attestation is compliant as soon as a PR exists — it records approvers but
-cannot require them. So the pipeline makes both: `pull-request` (trail level) for the raw
-evidence, and `orders-api.peer-review` (custom) carrying the facts. The facts are the same as
-they always were; what changed is who judges them — see below.
+**The native `pull_request` attestation is not enough on its own for peer review.** It is
+compliant as soon as a PR exists — it records approvers but cannot require them. So the
+pipeline attests `pull-request` (trail level) for the raw evidence, and separately gathers the
+pull-request facts (who approved, whether they wrote the code) that decide whether it counts
+as a peer review — see below for how those facts are judged and what happens to them.
 
-**Peer review's judgment moved off the attestation type and onto a control (customer's call,
-2026-08-25).** `peer-review` used to carry the compliance-deciding jq rule
-`(.distinct_approvers >= 2) or (.independent_approval == true)` directly, the same as every
-other custom type here. Now the type has no jq rules at all — it is evidence only — and
-`kosli/policies/peer-review.rego` makes the call, run with `kosli evaluate input
---input-file peer-review.json --policy kosli/policies/peer-review.rego` against the exact
-same JSON the type used to judge. The verdict is recorded as a `decision`-type attestation
-against the `peer-review` control (`kosli create control peer-review`), via `kosli attest
-decision --control peer-review --compliant=<verdict>`, named `peer-review-decision` in
-`kosli/flow-templates/order-system-ci.yml` right next to `peer-review` — unlike
-`integration-tests`/`release-approval` it is produced in the same job as its evidence, so
-being in the template (and so gating publish-gate, via `trail-compliance`) is correct, not a
-timing hazard. This does **not** reopen the earlier decision to use `kosli assert
-artifact --policy` over `kosli evaluate trail` for the release gate itself — that risk
-(`evaluate` needing per-org beta enablement) is exactly why peer review is judged with
-`evaluate input` against a local JSON file rather than `evaluate trail` against the org's
-copy of it. `kosli create control` and `kosli attest decision` are themselves beta and do hit
-the org, though, and `kosli-public` does not have Controls enabled yet — see State, above.
-Mirrors the "never alone" control in https://github.com/kosli-dev/control-actions, same as
-before.
+**Peer review's judgment moved off an attestation type and onto a control (customer's call,
+2026-08-25), and the type itself was dropped shortly after (customer's call, same day).**
+`orders-api.peer-review` used to be a custom attestation type carrying the compliance-deciding
+jq rule `(.distinct_approvers >= 2) or (.independent_approval == true)` directly, the same as
+every other custom type here. That judgment moved to `kosli/policies/peer-review.rego`, run
+with `kosli evaluate input --input-file peer-review.json --policy
+kosli/policies/peer-review.rego` against the exact same JSON the type used to judge, with the
+verdict recorded as a `decision`-type attestation against the `peer-review` control (`kosli
+create control peer-review`), via `kosli attest decision --control peer-review
+--compliant=<verdict>`, named `peer-review-decision` in
+`kosli/flow-templates/order-system-ci.yml`. Once the type carried no jq rules of its own —
+evidence nobody read back from Kosli — attesting it stopped earning its keep, so the `kosli
+attest custom --type peer-review` call and the `kosli create attestation-type peer-review`
+call were both removed; `scripts/peer_review_attestation.py` still writes `peer-review.json`
+in the `backend` job, but now purely as local input to the `evaluate input` call in the same
+step, and it still travels as an `--attachments` file on the `peer-review-decision`
+attestation, so the raw evidence is not lost, just no longer double-attested. Unlike
+`integration-tests`/`release-approval`, `peer-review-decision` is produced in the same job as
+the evidence it judges, so being in the flow template (and so gating publish-gate, via
+`trail-compliance`) is correct, not a timing hazard. This does **not** reopen the earlier
+decision to use `kosli assert artifact --policy` over `kosli evaluate trail` for the release
+gate itself — that risk (`evaluate` needing per-org beta enablement) is exactly why peer
+review is judged with `evaluate input` against a local JSON file rather than `evaluate trail`
+against the org's copy of it. `kosli create control` and `kosli attest decision` are
+themselves beta and do hit the org, though, and `kosli-public` does not have Controls enabled
+yet — see State, above. Mirrors the "never alone" control in
+https://github.com/kosli-dev/control-actions, same as before. `publish-gate.yml` and
+`prod-deploy-gate.yml` were updated to name `peer-review-decision`/`decision` instead of
+`peer-review`/`custom:peer-review`, matching what `release-gate.yml` already did; the now-unused
+`kosli/attestation-types/peer-review.schema.json` was deleted.
 
 **The gate is `kosli assert artifact --policy`, not `kosli evaluate trail` with rego.**
 `kosli evaluate` is a beta feature that has to be enabled per org — not something to bet a
@@ -380,7 +392,7 @@ that line: it is why the mobile half needs no toolchain installed.
 Secret `KOSLI_PUBLIC_API_TOKEN` (the workflows map it onto `KOSLI_API_TOKEN` in the job env,
 since that's the only env var name the Kosli CLI itself recognizes for `--api-token`); then
 run the **Bootstrap Kosli** workflow (re-run it after any change under `kosli/`: it creates
-the five custom types, the `peer-review` control, and both policies). **Controls is a beta
+the four custom types, the `peer-review` control, and both policies). **Controls is a beta
 feature that Kosli has to enable for `kosli-public`** before `create control` or the
 `peer-review` control decision step in `ci-build.yml` will do anything but fail — confirmed
 disabled as of 2026-08-25 (`kosli list controls --org kosli-public` → "Controls is not
