@@ -21,11 +21,8 @@ artifacts:
   # the integration test run and the approval exist, so requiring the whole trail would
   # always block. The component's own controls are what it judges.
   attestations:
-    # TEMP-BYPASS-PEER-REVIEW - revert this block, and the two others with the same marker,
-    # to put the peer review control back. Re-run "Bootstrap Kosli" after either change:
-    # this policy only reaches Kosli through that workflow.
-    # - name: peer-review
-    #   type: custom:peer-review
+    - name: peer-review
+      type: custom:peer-review
 
     - name: unit-tests
       type: junit

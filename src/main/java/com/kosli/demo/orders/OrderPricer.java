@@ -25,8 +25,8 @@ public final class OrderPricer {
         if (quantity < 1) {
             throw new IllegalArgumentException("quantity must be at least 1");
         }
-        if (quantity > 1000) {
-            throw new IllegalArgumentException("quantity must not exceed 1000");
+        if (quantity > 900) {
+            throw new IllegalArgumentException("quantity must not exceed 900");
         }
 
         BigDecimal subtotal = UNIT_PRICE.multiply(BigDecimal.valueOf(quantity));

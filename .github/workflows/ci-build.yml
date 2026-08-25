@@ -148,21 +148,18 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # -------------------------------------------------------------------- 1. Peer review
-      # TEMP-BYPASS-PEER-REVIEW - revert this block, and the two others with the same marker,
-      # to put the peer review control back. Disabled to get a build through to App Service
-      # while the environment fingerprint is being sorted out.
-      # - name: Attest the peer review evaluation
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #   run: |
-      #     python3 scripts/peer_review_attestation.py \
-      #       --repo "$GITHUB_REPOSITORY" \
-      #       --commit "$GITHUB_SHA" \
-      #       --out peer-review.json
-      #     kosli attest custom \
-      #       --name "$ARTIFACT_NAME.peer-review" \
-      #       --type peer-review \
-      #       --attestation-data peer-review.json
+      - name: Attest the peer review evaluation
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/peer_review_attestation.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --commit "$GITHUB_SHA" \
+            --out peer-review.json
+          kosli attest custom \
+            --name "$ARTIFACT_NAME.peer-review" \
+            --type peer-review \
+            --attestation-data peer-review.json
 
       - name: Attest the unit tests
         run: |
