@@ -61,7 +61,7 @@ integration-tests/result-{pass,fail}.json  integration test runs to report to a 
 infra/main.bicep                   Linux App Service plan + Java SE web app
 
 mobileorders/{android,ios}/        the mobile app source
-oversecured/report-pass.json       the Oversecured scan report the mobile apps are judged on
+oversecured/report-{pass,fail}.json  the Oversecured scan reports (only pass is wired up)
 Makefile                           scan and package the mobile app (Docker, no toolchain)
 
 scripts/bootstrap_kosli.sh         creates the attestation types and the policy
@@ -322,8 +322,8 @@ asserts at the end of the pipeline.
 - **The report does not describe these zips.** It is a real Oversecured scan of an Android APK
   (`app.platform: "android"`, `scan.fileName: "file1.apk"`), and the same report is attested to
   both mobile artifacts. Nothing scans this repo's mobile source.
-- **There is no failing case yet.** The committed report is the passing one, so the control
-  always passes. A `report-fail.json` with high-severity findings is the next step.
+- **The failing report is committed but unused.** `report-fail.json` has 2 high-severity
+  findings and does fail the rules; nothing selects it yet, so the control always passes.
 - **Nothing validates the jq rules automatically.** All three were checked by hand with `jq`
   against the committed report, but a later edit's breakage is first seen in a workflow run.
 - **`minSdkVersion=30`, the `<uses-sdk>` element and the empty `NSAppTransportSecurity` dict
@@ -413,11 +413,12 @@ with `kosli get artifact order-system-ci:<sha>`.
 
 ## Deliberate simplifications
 
-**The Oversecured report is canned**, at the customer's request. `oversecured/report-pass.json`
-is a real Oversecured scan, supplied by them, with its two high-severity findings removed so it
-is the passing case; the untouched original is the failing case, and goes in next. In a real
-pipeline the scan would run against the built APK/IPA and its report would be fetched from
-Oversecured's API — the attestation type, the rules and the gate would not change.
+**The Oversecured report is canned**, at the customer's request. `oversecured/report-fail.json`
+is a real Oversecured scan supplied by them, with two high-severity findings;
+`oversecured/report-pass.json` is the same scan with those two removed. The pipeline attests
+the passing one; the failing one is committed but not yet wired up. In a real pipeline the scan
+would run against the built APK/IPA and its report would be fetched from Oversecured's API —
+the attestation type, the rules and the gate would not change.
 
 **Mutation testing does not fail the Maven build.** PIT reports the score and Maven carries
 on; the threshold is enforced by Kosli, which is the point — the control and the waiver live
@@ -446,9 +447,9 @@ negation rather than ignoring `deploy/` outright.
 
 ## Next steps for the rest of the scenario
 
-- **A failing Oversecured report:** `oversecured/report-fail.json`, the customer's original
-  report with its two high-severity findings intact, chosen by a workflow input the way the
-  integration test result is. That is what shows the control blocking.
+- **Wire up the failing Oversecured report:** `oversecured/report-fail.json` is in the repo
+  already; it needs a workflow input to select it, the way the integration test result is
+  chosen. That is what shows the control blocking.
 - **Mobile builds:** `make apk` — a real Android build in a container, so the APK replaces
   the zip; then `make ipa` on a macOS runner, since Xcode cannot be containerised and so,
   unlike `apk`, it will not run on Linux.

@@ -64,8 +64,8 @@ Verified before pushing:
 
 For the mobile half, verified locally after the switch to Oversecured: all three
 `oversecured` rules return true against the slim data the script emits from
-`oversecured/report-pass.json`, and the second and third return false against the untouched
-customer report - which is the failing case, not yet committed. `make package` still produces
+`oversecured/report-pass.json`, and the second and third return false against
+`oversecured/report-fail.json`. `make package` still produces
 both zips, and `kosli attest custom` dry-runs with each zip's own fingerprint.
 
 For the release half (point 3), verified locally: the new flow template and
@@ -226,9 +226,10 @@ still going. `publish-gate` needs only `backend`, since it judges the backend's 
 
 **The mobile control is a canned Oversecured report** (customer's call, 2026-08-25),
 replacing the mobsfscan SARIF scan, which is gone along with `make scan`.
-`oversecured/report-pass.json` is the customer's own scan of an Android APK with its two
-high-severity findings removed, so that it is the passing case; the untouched original is the
-failing case and goes in later as `report-fail.json`.
+`oversecured/report-fail.json` is the customer's own scan of an Android APK, with 2
+high-severity findings; `oversecured/report-pass.json` is that scan with the two removed. Both
+are committed, both were run through the rules, and only the passing one is wired up - nothing
+selects between them yet. Both are `jq .`-normalised so they diff against each other.
 
 **Only the report's header is attested; the report itself is an attachment.** The file is
 3.7 MB, nearly all of it code snippets and HTML remediation text, and Kosli documents no size
@@ -368,8 +369,8 @@ that line: it is why the mobile half needs no toolchain installed.
 - **`minSdkVersion=30`, `<uses-sdk>` and the empty `NSAppTransportSecurity` dict are
   historical** - added to satisfy mobsfscan, which is gone. Harmless, and correct for a real
   app, so they stay.
-- **The mobile control has no failing case.** The committed report is the passing one.
-  `report-fail.json` is what shows it blocking.
+- **The mobile control has no failing case in the pipeline**, though `report-fail.json` is in
+  the repo and does fail the rules. Showing it block needs a workflow input that selects it.
 - **Nothing validates the jq rules automatically.** All three `oversecured` rules were run with
   `jq` against the committed report and the failing original; there is no check that keeps them
   honest, so a later edit's breakage is first seen in a workflow run.
