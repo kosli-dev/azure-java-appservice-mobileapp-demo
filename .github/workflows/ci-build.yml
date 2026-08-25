@@ -130,6 +130,7 @@ jobs:
       - name: Attest the backend
         id: artifact
         run: |
+          kosli fingerprint deploy --artifact-type dir --debug
           ORDERS_API_FINGERPRINT="$(kosli fingerprint deploy --artifact-type dir)"
           echo "orders-api-fingerprint=$ORDERS_API_FINGERPRINT" >> "$GITHUB_OUTPUT"
           # Every later orders-api attestation binds to it via KOSLI_FINGERPRINT.
