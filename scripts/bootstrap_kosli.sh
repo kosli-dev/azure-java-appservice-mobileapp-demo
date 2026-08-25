@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
 # One-time (idempotent) setup of the org-level Kosli objects this demo needs:
-#   * five custom attestation types, each carrying the jq rules that DECIDE compliance
+#   * five custom attestation types, four of which carry the jq rules that DECIDE compliance
+#     directly (peer-review is now evidence-only - see below)
+#   * the peer-review control, judged by a Rego policy rather than a type's jq rules
 #   * the publish-gate policy that `kosli assert artifact` enforces in CI
 #   * the release-gate policy the release workflow enforces after the manual approval
 #
@@ -18,17 +20,26 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "==> peer-review attestation type"
-# The control: a change is peer reviewed if two different people approved it, OR if at least
-# one approver contributed no commits to the branch (Kosli's "never alone" review control).
+# Evidence only, no compliance-deciding jq rules: the facts (who approved, whether they wrote
+# the code) are attested here, but whether they amount to a peer review is now judged by
+# kosli/policies/peer-review.rego against the `peer-review` control below, not by this type.
 kosli create attestation-type peer-review \
-  --description "Peer review of the pull request behind a commit: two distinct approvers, or one approver who did not write the code." \
+  --description "Facts about the pull request behind a commit, used as evidence for the peer-review control." \
   --schema kosli/attestation-types/peer-review.schema.json \
-  --jq '.pull_request_url != null' \
-  --jq '(.distinct_approvers >= 2) or (.independent_approval == true)' \
   --summary "Pull request=.pull_request_url" \
   --summary "Author=.author" \
   --summary "Approvers=.distinct_approvers" \
   --summary "Independent approval=.independent_approval"
+
+echo "==> peer-review control"
+# The judgment that used to live in the peer-review type's jq rules: a change is peer
+# reviewed if two different people approved it, OR if at least one approver contributed no
+# commits to the branch (Kosli's "never alone" review control). Evaluated by
+# kosli/policies/peer-review.rego and recorded with `kosli attest decision --control
+# peer-review` in ci-build.yml.
+kosli create control peer-review \
+  --name "Peer review" \
+  --description "The pull request behind a commit was approved by two distinct people, or by one approver who did not write the code."
 
 echo "==> mutation-testing attestation type"
 kosli create attestation-type mutation-testing \
@@ -98,5 +109,6 @@ kosli create policy release-gate kosli/policies/release-gate.yml \
 echo
 echo "Done. Verify with:"
 echo "  kosli list attestation-types"
+echo "  kosli list controls"
 echo "  kosli get policy publish-gate"
 echo "  kosli get policy release-gate"

@@ -2,8 +2,7 @@
 #
 # Waive (override) a non-compliant attestation, with a reason that is recorded forever.
 #
-# This is the scripted equivalent of clicking "Override" on the attestation in the Kosli UI:
-# it POSTs to the trail's override endpoint, Kosli recalculates compliance for the trail and
+# This POSTs to the trail's override endpoint, Kosli recalculates compliance for the trail and
 # the artifact, and the override - who, when, why - stays attached to the trail as evidence.
 #
 # Usage:

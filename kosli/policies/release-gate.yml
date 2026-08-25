@@ -16,7 +16,8 @@
 # `trail-compliance` covers the build's own controls, from order-system-ci.yml. The two
 # release controls are listed below instead: they are attested after the build, so the
 # template cannot require them without making the component non-compliant at publish-gate
-# time. This policy is where they are enforced.
+# time. `peer-review-decision` is in the template too, but is also named explicitly below so
+# this policy requires a decision about the `peer-review` control in its own right.
 _schema: https://docs.kosli.com/schemas/policy/v1
 
 artifacts:
@@ -25,15 +26,22 @@ artifacts:
   provenance:
     required: true
 
-  # Everything order-system-ci.yml asks for: the backend's controls and both mobile scans.
+  # Everything order-system-ci.yml asks for: the backend's controls (including the
+  # peer-review control decision) and both mobile scans.
   trail-compliance:
     required: true
 
-  # The release controls. Both are attested against this artifact's fingerprint, not the
-  # trail, so that these rules match them.
+  # The release controls, plus the peer-review control decision. All three are attested
+  # against this artifact's fingerprint, not the trail, so that these rules match them.
   attestations:
     - name: integration-tests
       type: custom:integration-test
 
     - name: release-approval
       type: custom:approval-github-workflow
+
+    # Recorded by `kosli attest decision --control peer-review` in ci-build.yml, from
+    # evaluating kosli/policies/peer-review.rego against the peer-review evidence.
+    - name: peer-review-decision
+      type: decision
+      for_control: peer-review

@@ -27,10 +27,18 @@ trail is the commit:
 
 | Artifact | Attestations |
 | --- | --- |
-| `orders-api` | `peer-review`, `unit-tests`, `sonar-quality-gate`, `mutation-tests` |
+| `orders-api` | `peer-review`, `peer-review-decision`, `unit-tests`, `sonar-quality-gate`, `mutation-tests` |
 | `mobileorders-android` | `mobile-sast` |
 | `mobileorders-ios` | `mobile-sast` |
 | (trail level) | `pull-request`, `integration-tests`, `release-approval` |
+
+`orders-api.peer-review` is now evidence only (no compliance-deciding jq rules). The judgment
+moved to a control: `orders-api.peer-review-decision`, a `decision`-type attestation recording
+the verdict of `kosli/policies/peer-review.rego` against the `peer-review` control. Unlike
+`integration-tests` and `release-approval`, it *is* in the flow template, right alongside
+`peer-review` — it's produced in the same job as the evidence it judges, so nothing stops it
+being there, and being there means publish-gate blocks on a bad peer review again, the same as
+before the conversion.
 
 Template: `kosli/flow-templates/order-system-ci.yml`. The `orders-api-ci`, `mobileorders` and
 `order-system-release` flows still exist in `kosli-public` with their history; nothing writes
@@ -49,6 +57,9 @@ Verified before pushing:
 - `kosli/policies/*.yml` validated against `https://docs.kosli.com/schemas/policy/v1.json`.
 - `kosli/flow-templates/*.yml` validated against the `Template` model in Kosli's OpenAPI spec.
 - `actionlint` (with shellcheck), `shellcheck`, and `bicep build` all clean.
+- `kosli/policies/peer-review.rego` passes `opa check` and `opa fmt --diff` (no diff), and
+  `kosli evaluate input` against it returns the expected verdict for all four cases: two
+  approvers, one independent approver, one dependent approver, no pull request.
 
 For the mobile half, verified in the `mobile-app-example` repo before the merge: mobsfscan
 runs clean on both platforms (Android tuned to no error-level findings, iOS all `note`), and
@@ -65,12 +76,31 @@ command dry-runs clean on **v2.38.0** (including `bootstrap_kosli.sh` end to end
 
 Not verified, and the first live run is the test of it:
 
+- **`kosli list controls --org kosli-public` returns "Controls is not enabled for this
+  organization".** `kosli create control` and `kosli attest decision` are both BETA and both
+  hit org-gated endpoints (`create control` got "Access denied" even before that, which is
+  consistent with an invalid token rather than the same enablement check — but `list controls`
+  needs no write auth and named the real reason). Kosli has to turn the beta on for
+  `kosli-public` before `bootstrap_kosli.sh`'s `peer-review` control and `ci-build.yml`'s
+  "Evaluate and record the peer review control decision" step will do anything but fail. This
+  does *not* affect `kosli evaluate input`, which is local-only (no API call, no org, no
+  beta gate) — only `evaluate trail`/`evaluate trails` hit the org, which is why peer review
+  is evaluated from the JSON file directly rather than by re-fetching the trail.
 - Whether the `artifacts.attestations[].name` entries in a policy match on the short template
   name (`peer-review`) rather than the dotted CLI form (`orders-api.peer-review`). Evidence
   says short — `kosli attest junit --help` documents
   `--name yourTemplateArtifactName.yourAttestationName`, i.e. the dotted form is addressing,
-  not the stored name. It matters for `release-gate.yml`'s two release controls, which are
-  attested with plain names against the artifact's fingerprint.
+  not the stored name. It matters for `release-gate.yml`'s three named attestations, which are
+  matched with plain names against the artifact's fingerprint. Confirmed the stored name is
+  short either way `attest decision` addresses the artifact: a dotted dry run (`--name
+  orders-api.peer-review-decision`, no `--fingerprint`) split into `attestation_name:
+  "peer-review-decision"` plus `target_artifacts: ["orders-api"]`; a plain dry run (`--name
+  peer-review-decision --fingerprint "$KOSLI_FINGERPRINT"`) produced the identical
+  `attestation_name` with `artifact_fingerprint` set directly and no `target_artifacts`. Since
+  the fingerprint is already known at that point in the `backend` job, `ci-build.yml` uses the
+  plain form: prefer `--fingerprint` over the dotted address-by-template-name form whenever
+  the fingerprint is already in hand, and reserve the dotted form for attestations made before
+  the artifact itself has been reported.
 - Whether the custom attestation type names collide with existing types in `kosli-public`.
   Run `kosli list attestation-types` before the first bootstrap — re-running it would version
   an existing type rather than create a new one.
@@ -100,20 +130,42 @@ Not verified, and the first live run is the test of it:
 **Peer review is a custom attestation type, not just `pull_request`.** The native
 `pull_request` attestation is compliant as soon as a PR exists — it records approvers but
 cannot require them. So the pipeline makes both: `pull-request` (trail level) for the raw
-evidence, and `orders-api.peer-review` (custom) carrying the facts, with the rule living on
-the type: `(.distinct_approvers >= 2) or (.independent_approval == true)`. That mirrors the
-"never alone" control in https://github.com/kosli-dev/control-actions.
+evidence, and `orders-api.peer-review` (custom) carrying the facts. The facts are the same as
+they always were; what changed is who judges them — see below.
+
+**Peer review's judgment moved off the attestation type and onto a control (customer's call,
+2026-08-25).** `peer-review` used to carry the compliance-deciding jq rule
+`(.distinct_approvers >= 2) or (.independent_approval == true)` directly, the same as every
+other custom type here. Now the type has no jq rules at all — it is evidence only — and
+`kosli/policies/peer-review.rego` makes the call, run with `kosli evaluate input
+--input-file peer-review.json --policy kosli/policies/peer-review.rego` against the exact
+same JSON the type used to judge. The verdict is recorded as a `decision`-type attestation
+against the `peer-review` control (`kosli create control peer-review`), via `kosli attest
+decision --control peer-review --compliant=<verdict>`, named `peer-review-decision` in
+`kosli/flow-templates/order-system-ci.yml` right next to `peer-review` — unlike
+`integration-tests`/`release-approval` it is produced in the same job as its evidence, so
+being in the template (and so gating publish-gate, via `trail-compliance`) is correct, not a
+timing hazard. This does **not** reopen the earlier decision to use `kosli assert
+artifact --policy` over `kosli evaluate trail` for the release gate itself — that risk
+(`evaluate` needing per-org beta enablement) is exactly why peer review is judged with
+`evaluate input` against a local JSON file rather than `evaluate trail` against the org's
+copy of it. `kosli create control` and `kosli attest decision` are themselves beta and do hit
+the org, though, and `kosli-public` does not have Controls enabled yet — see State, above.
+Mirrors the "never alone" control in https://github.com/kosli-dev/control-actions, same as
+before.
 
 **The gate is `kosli assert artifact --policy`, not `kosli evaluate trail` with rego.**
 `kosli evaluate` is a beta feature that has to be enabled per org — not something to bet a
 customer demo on. `--policy` takes an `env`-type policy and asserts an artifact against it
 directly, with no environment involved. The README explains the rego route for rules the
-policy YAML can't express.
+policy YAML can't express. (The peer-review control is a narrower, deliberate exception: it
+uses `evaluate input`, not `evaluate trail`, specifically to avoid this risk — see above.)
 
 **Scripts report facts; Kosli decides compliance.** None of the Python scripts return a
-pass/fail. They emit JSON, and the jq rules on the attestation types do the judging. Keep it
-that way — it is the whole point of the demo, and it means the rule changes in one place for
-every component that uses the type.
+pass/fail. They emit JSON, and either the jq rules on the attestation type or (for peer
+review) a Rego policy evaluated by Kosli's CLI does the judging — never the script itself.
+Keep it that way — it is the whole point of the demo, and it means the rule changes in one
+place for every component that uses the type or control.
 
 **Mutation testing does not fail the Maven build** (`failWhenNoMutations=false`, no score
 threshold in the POM). The threshold lives in the attestation data and is enforced by Kosli.
@@ -182,7 +234,11 @@ at the publish gate, which runs minutes before the integration test result and t
 exist — with them in the template, the publish gate failed every run on controls that could
 not possibly be there yet. So `integration-tests` and `release-approval` are named in
 `release-gate.yml` and `prod-deploy-gate.yml` instead. Putting them back in the template
-re-breaks the publish gate.
+re-breaks the publish gate. `peer-review-decision` is the exception that proves the rule: it
+*is* in the template (customer's call, 2026-08-25), because unlike the other two it is
+produced in the `backend` job, at the same time as the evidence it judges — there is no
+publish-gate-breaking timing problem to design around, so it belongs where every other
+build-time control does.
 
 **The publish gate asserts no policy** (customer's call, 2026-08-25). `kosli assert artifact`
 with neither `--policy` nor `--environment` judges the artifact against its flow template,
@@ -191,7 +247,10 @@ belong to the release gate. `kosli/policies/publish-gate.yml` is therefore unuse
 still created by the bootstrap, only because it documents the same control set as a policy.
 
 **`release-gate` requires `trail-compliance`** - which is now exactly "the build did
-everything it owed", including both mobile scans - **plus** the two release controls by name.
+everything it owed", including both mobile scans and the peer-review control decision -
+**plus** three attestations by name: `integration-tests`, `release-approval`, and
+`peer-review-decision` again (`for_control: peer-review`) even though `trail-compliance`
+already covers it, so this policy requires a decision about that control in its own right.
 There is no mobile-specific gate.
 
 **`mobile-sast` has jq rules but no JSON Schema**, unlike the three orders-api types. Nothing
@@ -303,7 +362,11 @@ installed.
 Secret `KOSLI_PUBLIC_API_TOKEN` (the workflows map it onto `KOSLI_API_TOKEN` in the job env,
 since that's the only env var name the Kosli CLI itself recognizes for `--api-token`); then
 run the **Bootstrap Kosli** workflow (re-run it after any change under `kosli/`: it creates
-the five custom types and both policies). Enable the Sonar integration in the
+the five custom types, the `peer-review` control, and both policies). **Controls is a beta
+feature that Kosli has to enable for `kosli-public`** before `create control` or the
+`peer-review` control decision step in `ci-build.yml` will do anything but fail — confirmed
+disabled as of 2026-08-25 (`kosli list controls --org kosli-public` → "Controls is not
+enabled for this organization"). Enable the Sonar integration in the
 Kosli app (org-level) and put its webhook URL/secret on the SonarCloud project; secret
 `SONAR_TOKEN` for the scan step, and turn off SonarCloud's Automatic Analysis for the project.
 Add required reviewers to the `production-release` GitHub environment, or the release never

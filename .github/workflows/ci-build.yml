@@ -148,7 +148,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # -------------------------------------------------------------------- 1. Peer review
-      - name: Attest the peer review evaluation
+      - name: Attest the peer review evidence
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -160,6 +160,31 @@ jobs:
             --name "$ARTIFACT_NAME.peer-review" \
             --type peer-review \
             --attestation-data peer-review.json
+
+      # The peer-review type carries no compliance-deciding jq rules any more - the judgment
+      # is made here by kosli/policies/peer-review.rego, against the same facts, and recorded
+      # as a decision against the `peer-review` control. peer-review-decision is in the flow
+      # template (order-system-ci.yml), so a bad peer review fails trail-compliance - and so
+      # publish-gate - as soon as this job finishes, same as unit-tests or mutation-tests.
+      - name: Evaluate and record the peer review control decision
+        run: |
+          VERDICT="$(kosli evaluate input \
+            --input-file peer-review.json \
+            --policy kosli/policies/peer-review.rego \
+            --no-assert \
+            --output json)"
+          COMPLIANT="$(echo "$VERDICT" | jq -r '.allow')"
+          echo "$VERDICT" | jq -r '.violations[]? | "peer review: " + .'
+          # Plain name + explicit --fingerprint, not the dotted artifact.attestation form: the
+          # fingerprint is already known (KOSLI_FINGERPRINT, set when the artifact was
+          # attested above), so there is nothing for name-based template addressing to resolve
+          # that the fingerprint doesn't already say more directly.
+          kosli attest decision \
+            --name peer-review-decision \
+            --fingerprint "$KOSLI_FINGERPRINT" \
+            --control peer-review \
+            --compliant="$COMPLIANT" \
+            --attachments peer-review.json
 
       - name: Attest the unit tests
         run: |

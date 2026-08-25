@@ -1,12 +1,9 @@
 name: Waive an attestation
 
 # Waives (overrides) a non-compliant attestation on a trail, with a reason that is recorded
-# in Kosli forever. This is the workflow-driven equivalent of clicking "Override" on the
-# attestation in the Kosli UI - handy in a demo where you would rather not switch to a
-# terminal, and a realistic pattern for teams that want waivers to leave an audit trail in
-# GitHub as well as in Kosli.
+# in Kosli forever.
 #
-# The mutation-testing control is the one that fails by design in this demo, so its values
+# The mutation-testing control is the one that can be failed via an environment variable, so its values
 # are the defaults below.
 
 on:
