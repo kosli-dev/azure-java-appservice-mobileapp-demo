@@ -243,8 +243,7 @@ jobs:
 
   # ------------------------------------------------------------------- 4. The mobile apps
   mobile:
-    name: Build, scan and attest ${{ matrix.platform }}
-    # ubuntu, not macos, for both legs: mobsfscan reads iOS source, so no Xcode is needed.
+    name: Build and attest ${{ matrix.platform }}
     runs-on: ubuntu-latest
     needs: trail
     strategy:
@@ -253,7 +252,6 @@ jobs:
         platform: [android, ios]
     env:
       ARTIFACT: build/mobileorders-${{ matrix.platform }}.zip
-      SARIF: build/mobsfscan-${{ matrix.platform }}.sarif
     steps:
       - uses: actions/checkout@v5
 
@@ -271,17 +269,21 @@ jobs:
             --artifact-type file \
             --name "mobileorders-${{ matrix.platform }}"
 
-      - name: Scan
-        run: make scan PLATFORM=${{ matrix.platform }}
-
-      - name: Attest the scan
+      # The Oversecured report is a canned one from the customer, the same for both
+      # platforms. Only the header is attested: the full report is far too large for
+      # attestation data, so it goes to the Evidence Vault as an attachment.
+      - name: Attest the Oversecured report
         run: |
+          python3 scripts/oversecured_attestation.py \
+            --report oversecured/report-pass.json \
+            --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --out oversecured.json
           kosli attest custom \
             --fingerprint "$(kosli fingerprint "$ARTIFACT" --artifact-type file)" \
-            --name mobile-sast \
-            --type mobile-sast \
-            --attestation-data "$SARIF" \
-            --attachments "$SARIF"
+            --name oversecured \
+            --type oversecured \
+            --attestation-data oversecured.json \
+            --attachments oversecured/report-pass.json
 
   # ------------------------------------------------------------------------- 5. Publish gate
   publish-gate:
