@@ -37,9 +37,18 @@ echo "==> peer-review control"
 # commits to the branch (Kosli's "never alone" review control). Evaluated by
 # kosli/policies/peer-review.rego and recorded with `kosli attest decision --control
 # peer-review` in ci-build.yml.
-kosli create control peer-review \
-  --name "Peer review" \
-  --description "The pull request behind a commit was approved by two distinct people, or by one approver who did not write the code."
+# `kosli create control` errors if the control exists, unlike create attestation-type and
+# create policy, which version instead - so re-running this script needs the update path.
+CONTROL_DESCRIPTION="The pull request behind a commit was approved by two distinct people, or by one approver who did not write the code."
+if kosli get control peer-review >/dev/null 2>&1; then
+  kosli update control peer-review \
+    --name "Peer review" \
+    --description "$CONTROL_DESCRIPTION"
+else
+  kosli create control peer-review \
+    --name "Peer review" \
+    --description "$CONTROL_DESCRIPTION"
+fi
 
 echo "==> mutation-testing attestation type"
 kosli create attestation-type mutation-testing \
