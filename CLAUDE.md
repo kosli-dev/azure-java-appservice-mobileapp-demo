@@ -323,6 +323,22 @@ reason that reads like a missing test. The release-gate job has the fingerprint 
 `needs.backend.outputs.orders-api-fingerprint`; the integration test workflow looks it up with
 `kosli get artifact order-system-ci:<sha> --output json`.
 
+**`deploy/build-time.txt` exists to make each build its own artifact.** The JAR is
+byte-reproducible - `project.build.outputTimestamp` is pinned in the POM, and Spring Boot's
+parent propagates it into the repackaged jar - so two commits with identical compiled output
+fingerprinted the same and collapsed into one artifact in Kosli. Observed: `orders-api` was
+`92fbd0c4…` across five different commits. An ISO timestamp written at stage time fixes that.
+The cost is that a *re-run* of the same commit now also produces a new fingerprint and a second
+artifact on the trail; `git rev-parse HEAD` instead would be per-commit stable, at the price of
+no longer distinguishing rebuilds. `.kosli_ignore` does not exclude the file, so it is hashed
+on both sides and the environment snapshot still matches.
+
+**The whole `deploy/` directory is uploaded, not a file list.** It is the directory that was
+fingerprinted, and the deploy job has no checkout - only the artifact - so anything missing from
+the upload is missing from wwwroot and breaks the fingerprint match. A file list needed editing
+every time the directory gained a file, which is how `.kosli_ignore` came to be missing once
+already.
+
 **Everything is built once, in one job.** The backend JAR and both mobile zips come from the
 same checkout, are fingerprinted there, and every attestation binds to those fingerprints. No
 rebuild happens later, so there is no question of the gated fingerprint differing from the

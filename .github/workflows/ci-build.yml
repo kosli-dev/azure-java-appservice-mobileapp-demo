@@ -125,6 +125,11 @@ jobs:
           mkdir -p deploy
           # App Service's Java SE container runs /home/site/wwwroot/app.jar
           cp target/orders-api.jar deploy/app.jar
+          # The JAR is reproducible (project.build.outputTimestamp in the POM), so two commits
+          # with identical compiled output fingerprint the same and become one artifact in
+          # Kosli. This makes every build its own artifact.
+          date -u +%Y-%m-%dT%H:%M:%SZ > deploy/build-time.txt
+          cat deploy/build-time.txt
 
       # ------------------------------------------------------------- Artifact + provenance
       - name: Attest the backend
@@ -226,13 +231,11 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: orders-api-jar
-          # .kosli_ignore has to travel with the jar: the deploy job has no checkout, only
-          # this artifact, and it needs to be at the root of what gets zipped and deployed so
-          # `kosli snapshot azure` (which unzips wwwroot and fingerprints it the same way)
-          # finds it there too.
-          path: |
-            deploy/app.jar
-            deploy/.kosli_ignore
+          # The whole directory, because it is the directory that was fingerprinted: the
+          # deploy job has no checkout, only this artifact, and what it deploys has to match
+          # what was attested file for file - `kosli snapshot azure` unzips wwwroot and
+          # fingerprints it the same way.
+          path: deploy
           # Dotfiles are excluded by default, which silently drops .kosli_ignore.
           include-hidden-files: true
           if-no-files-found: error
