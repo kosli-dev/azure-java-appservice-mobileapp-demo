@@ -1,0 +1,142 @@
+name: Waive an attestation
+
+# Overrides (waives) a non-compliant attestation on a trail, with a reason that is recorded on
+# the trail forever. Kosli recalculates compliance for the trail and the artifact once the
+# override lands, so a blocked gate can be re-checked immediately after.
+#
+# The mutation-testing control is the one that can be failed via an environment variable, so
+# its values are the defaults below - but any artifact-bound attestation on this trail can be
+# overridden the same way.
+
+on:
+  workflow_dispatch:
+    inputs:
+      trail:
+        description: "Trail name (the git commit SHA of the blocked build)"
+        type: string
+        required: true
+      fingerprint:
+        description: "Artifact fingerprint (printed by the build-and-attest job)"
+        type: string
+        required: true
+      reason:
+        description: "Why is this acceptable, and what happens next?"
+        type: string
+        required: true
+      artifact:
+        description: "Artifact name from the flow template"
+        type: string
+        default: orders-api
+      attestation:
+        description: "Attestation name from the flow template"
+        type: string
+        default: mutation-tests
+      attestation_type:
+        description: "Type of the attestation being waived"
+        type: string
+        default: custom:mutation-testing
+
+permissions:
+  contents: read
+
+env:
+  KOSLI_HOST: https://app.kosli.com
+  KOSLI_ORG: kosli-public
+  KOSLI_FLOW: order-system-ci
+  KOSLI_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}
+
+jobs:
+  waive:
+    name: Record the waiver
+    runs-on: ubuntu-latest
+    environment: waivers # optional: add required reviewers here to make waivers a two-person job
+    steps:
+      # POSTs straight to the trail's override endpoint - there is no `kosli waive` CLI
+      # command, and curl/jq are already on the runner, so this needs no checkout and no
+      # separate script.
+      - name: Record the waiver
+        env:
+          REASON: >-
+            ${{ inputs.reason }} (waived by ${{ github.actor }} via
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        run: |
+          payload="$(jq -n \
+            --arg name "${{ inputs.attestation }}" \
+            --arg artifact "${{ inputs.artifact }}" \
+            --arg fingerprint "${{ inputs.fingerprint }}" \
+            --arg type "${{ inputs.attestation_type }}" \
+            --arg reason "$REASON" \
+            --arg waived_by "${{ github.actor }}" \
+            '{
+               attestation_name: $name,
+               target_artifacts: [$artifact],
+               artifact_fingerprint: $fingerprint,
+               original_attestation_type: $type,
+               reason: $reason,
+               new_compliance_status: true,
+               user_data: { waived_by: $waived_by }
+             }')"
+
+          url="$KOSLI_HOST/api/v2/attestations/$KOSLI_ORG/$KOSLI_FLOW/trail/${{ inputs.trail }}/override"
+          echo "POST $url"
+          echo "$payload" | jq .
+
+          http_code="$(curl -sS -o response.json -w '%{http_code}' \
+            -X POST "$url" \
+            -H "Authorization: Bearer $KOSLI_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$payload")"
+
+          echo "HTTP $http_code"
+          cat response.json
+          echo
+
+          if [[ "$http_code" != "200" && "$http_code" != "201" ]]; then
+            echo "::error::waiver failed"
+            exit 1
+          fi
+
+  # Re-checks the artifact against the policies actually attached to each Azure environment -
+  # secure-development (staging and prod) and production-readiness (prod only) - rather than
+  # against a standalone policy object. `--policy publish-gate` (the old waive-attestation.yml)
+  # targeted the orphaned `publish-gate` policy object attached to nothing, not a check
+  # anything in the pipeline actually performs - see the "waiver mechanism is back" design
+  # decision in the working notes.
+  recheck:
+    name: Re-check ${{ matrix.kosli-environment }}
+    needs: waive
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kosli-environment:
+          - ${{ vars.KOSLI_ENVIRONMENT_STAGING || 'azure-appservice-staging' }}
+          - ${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }}
+    steps:
+      - name: Setup Kosli CLI
+        uses: kosli-dev/setup-cli-action@v5
+        with:
+          version: "2"
+
+      # An environment with no policies attached makes the assert below pass vacuously -
+      # same guard release-gate uses, and the same reason it's needed here.
+      - name: Check the environment has policies attached
+        run: |
+          attached=$(kosli get environment "${{ matrix.kosli-environment }}" --output json | jq '.policies // [] | length')
+          echo "${{ matrix.kosli-environment }} has $attached policies attached"
+          if [ "$attached" -eq 0 ]; then
+            echo "::error::No policies attached to ${{ matrix.kosli-environment }} - this"\
+                 " check would pass no matter what. Run the Bootstrap Kosli workflow with"\
+                 " 'create environment'."
+            exit 1
+          fi
+
+      # Asserted against the *environment*, not a standalone policy: the question is "would
+      # this artifact be allowed to run here?", the same question publish-gate/release-gate
+      # ask when the pipeline itself runs.
+      - name: Assert the environment's policies
+        run: |
+          kosli assert artifact \
+            --fingerprint "${{ inputs.fingerprint }}" \
+            --environment "${{ matrix.kosli-environment }}" \
+            --flow "$KOSLI_FLOW"
