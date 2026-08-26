@@ -95,6 +95,25 @@ waiver itself had already landed). This prompted dropping the waiver mechanism a
 `rerun-mutation-tests.yml`, which re-runs PIT with a lower threshold and re-attests for real,
 then re-checks the gate the correct way (`--flow`, no `--policy`). Not yet run live.
 
+The `sbom` attestations (added 2026-08-26) took two live rounds to land. **Round one**
+(all three legs): SBOM generation itself failed - `anchore/sbom-action@v0`'s `path` input
+always scans as `dir:<path>`, which only tries directory-shaped source providers (`oci-dir`,
+`local-directory`), so pointed at a single file (`deploy/app.jar`, or a mobile zip) every leg
+failed with "could not determine source ... not a directory". Fixed by installing syft with
+`anchore/sbom-action/download-syft@v0` and calling `syft <path> -o cyclonedx-json=<file>`
+directly instead of the all-in-one action - a bare path with no scheme prefix lets syft's own
+source auto-detection reach the `file` provider that `dir:` skips. **Round two**: generation
+passed for all three, but the attestation step then failed for both mobile legs (not the
+backend) with `Input payload validation failed: map[:'components' is a required property]`.
+Cause: `kosli/attestation-types/cyclonedx-sbom.schema.json` listed `components` as required,
+but syft omits the `components` key entirely (not `[]`) when a scan finds zero packages - and
+it always finds zero for the mobile zips, which have no Gradle/CocoaPods manifest (see the
+mobile gotchas). The backend jar always has *some* Spring Boot dependency, so it never hit
+this path, which is why only the mobile legs failed. Fixed by dropping `components` from
+`required` in the schema (kept in `properties`, so it's still documented and still validated
+when present) - confirmed against syft's actual empty-scan output, not just the schema text.
+Not yet re-run live to confirm this second fix goes green.
+
 Verified before pushing:
 
 - `mvn verify` green; PIT scores **76.5%** (13/17 mutants killed) against the default 85%
@@ -129,23 +148,10 @@ command dry-runs clean on **v2.38.0** (including `bootstrap_kosli.sh` end to end
 
 Not verified, and the first live run is the test of it:
 
-- The `sbom` attestations (`kosli attest custom --type cyclonedx-sbom`, added 2026-08-26).
-  Dry-run confirmed `kosli create attestation-type cyclonedx-sbom` (with the new
-  `kosli/attestation-types/cyclonedx-sbom.schema.json`, no `--jq`) and a matching
-  `kosli attest custom` call against a synthetic CycloneDX file both produce the expected
-  payload, and `type: custom:cyclonedx-sbom` is valid per the flow-template JSON schema. The
-  type has not actually been created in `kosli-public` yet either (needs a bootstrap re-run).
-  **The first live run of the SBOM generation step itself failed** (2026-08-26, all three
-  legs): `anchore/sbom-action@v0`'s `path` input always scans as `dir:<path>`, which only
-  tries directory-shaped source providers (`oci-dir`, `local-directory`) - pointed at a single
-  file (`deploy/app.jar`, or a mobile zip) it fails with "not a directory". Fixed by installing
-  syft with `anchore/sbom-action/download-syft@v0` and calling `syft <path> -o
-  cyclonedx-json=<file>` directly instead - a bare path with no scheme prefix lets syft's
-  normal source auto-detection reach the `file` provider, which directory-forcing via `dir:`
-  skips. Verified locally, for real, with syft v1.51.0 (`brew install syft`, not a dry-run):
-  it reads a jar's java-archive packages (including a Spring-Boot-style nested dependency)
-  correctly, and produces a valid zero-component CycloneDX document for a plain zip of source
-  files with no package manifest (the mobile case) rather than erroring. Not yet re-run live.
+- The `sbom` attestations' current fix (dropping `components` from the schema's `required`
+  list, see State above). Not yet re-run live - the two prior rounds each surfaced a failure
+  the other didn't, so a third clean run is the actual bar, not just a plausible-looking dry
+  run.
 - **`kosli list controls --org kosli-public` returns "Controls is not enabled for this
   organization".** `kosli create control` and `kosli attest decision` are both BETA and both
   hit org-gated endpoints (`create control` got "Access denied" even before that, which is
