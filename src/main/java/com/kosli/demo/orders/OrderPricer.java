@@ -10,11 +10,12 @@ import java.math.RoundingMode;
  * it has several branches and boundaries, and the unit tests deliberately cover only some
  * of them, so PIT leaves mutants alive and the mutation score lands below the policy
  * threshold.
+ * 
  */
 public final class OrderPricer {
 
     static final BigDecimal UNIT_PRICE = new BigDecimal("10.00");
-    static final BigDecimal EXPEDITED_FEE = new BigDecimal("7.50");
+    static final BigDecimal EXPEDITED_FEE = new BigDecimal("7.70");
     static final int BULK_THRESHOLD = 10;
     static final BigDecimal BULK_DISCOUNT = new BigDecimal("0.05");
 
@@ -25,8 +26,8 @@ public final class OrderPricer {
         if (quantity < 1) {
             throw new IllegalArgumentException("quantity must be at least 1");
         }
-        if (quantity > 900) {
-            throw new IllegalArgumentException("quantity must not exceed 900");
+        if (quantity > 800) {
+            throw new IllegalArgumentException("quantity must not exceed 800");
         }
 
         BigDecimal subtotal = UNIT_PRICE.multiply(BigDecimal.valueOf(quantity));
