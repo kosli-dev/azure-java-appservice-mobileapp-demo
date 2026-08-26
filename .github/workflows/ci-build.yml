@@ -86,21 +86,15 @@ jobs:
             --name pull-request \
             --github-token "${{ secrets.GITHUB_TOKEN }}"
 
-      - name: What happens next
+      - name: Trail summary
         run: |
           {
-            echo "### Next"
+            echo "### Kosli Trail"
             echo ""
             echo "| | |"
             echo "|---|---|"
             echo "| Trail | [\`$KOSLI_TRAIL\`](https://app.kosli.com/$KOSLI_ORG/flows/$KOSLI_FLOW/trails/$KOSLI_TRAIL) |"
             echo ""
-            echo "The trail is not compliant yet: nothing has reported an integration test run."
-            echo ""
-            echo "1. deploy-staging auto-triggers **Report integration test result** with commit"
-            echo "   \`$KOSLI_TRAIL\`, reporting the INTEGRATION_TEST_DEFAULT_RESULT variable's"
-            echo "   result. Run that workflow by hand to force \`pass\` or \`fail\` instead."
-            echo "2. Approve **release-gate** below. Kosli decides from there."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # -------------------------------------------------------------------- 1. Peer review
@@ -213,7 +207,7 @@ jobs:
             --artifact-type dir \
             --name "$ARTIFACT_NAME"
           {
-            echo "### Kosli"
+            echo "### Kosli Artifact"
             echo ""
             echo "| | |"
             echo "|---|---|"
@@ -389,16 +383,7 @@ jobs:
           Trail:    https://app.kosli.com/${KOSLI_ORG}/flows/${KOSLI_FLOW}/trails/${KOSLI_TRAIL}
           Template: kosli/flow-templates/order-system-ci.yml
 
-          Fix the failing control. If it's the mutation score, you can re-run PIT with a
-          different threshold instead of pushing a new commit, from the Actions tab with the
-          "Rerun mutation tests" workflow:
-
-            trail:               ${KOSLI_TRAIL}
-            fingerprint:         ${{ needs.backend.outputs.orders-api-fingerprint }}
-            mutation_threshold:  a value the current score clears
-
-          ...then re-run this job. The Sonar attestation arrives by webhook, so it can also
-          simply not have landed yet.
+          Fix the failing control. 
           ==========================================================================
           EOF
           )
@@ -443,7 +428,6 @@ jobs:
             echo "| Backend fingerprint | \`${{ needs.backend.outputs.orders-api-fingerprint }}\` |"
             echo "| URL | ${{ steps.deploy.outputs.webapp-url }} |"
             echo ""
-            echo "Integration tests run against this before the production gate is approved."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ------------------------------------------------------- 7. Report the environments, again
@@ -557,21 +541,9 @@ jobs:
           The release gate blocked ${KOSLI_TRAIL}.
 
           Trail:    https://app.kosli.com/${KOSLI_ORG}/flows/${KOSLI_FLOW}/trails/${KOSLI_TRAIL}
-          Policies: whatever is attached to ${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }} -
-                    kosli/policies/secure-development.yml and
-                    kosli/policies/production-readiness.yml
-
-          The usual cause in this demo is the integration test run: either it was never
-          reported to this trail, or it was reported as a failing run. The approval itself
-          was recorded a step earlier, as ${{ steps.approver.outputs.approver }}.
-
-          Run the "Report integration test result" workflow with:
-
-            commit: ${KOSLI_TRAIL}
-            result: pass
-
-          ...then re-run this job. Reporting again adds another attestation to the trail;
-          Kosli judges the latest one.
+          Policies: whatever is attached to https://app.kosli.com/${KOSLI_ORG}/environments/${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }}/snapshots/?active_tab=policies
+                    
+          Fix the failing control(s).
           ==========================================================================
           EOF
           )
@@ -612,7 +584,6 @@ jobs:
             echo "| Backend fingerprint | \`${{ needs.backend.outputs.orders-api-fingerprint }}\` |"
             echo "| URL | ${{ steps.deploy.outputs.webapp-url }} |"
             echo ""
-            echo "The next Azure environment snapshot should show this fingerprint running."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ----------------------------------------------------- 11. Report the environments, again
