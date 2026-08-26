@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "cyclonedx-sbom",
+  "description": "A CycloneDX software bill of materials for a built artifact (jar or mobile app package). Evidence only - no field here is evaluated for compliance.",
+  "type": "object",
+  "properties": {
+    "bomFormat": { "type": "string", "const": "CycloneDX" },
+    "specVersion": { "type": "string" },
+    "serialNumber": { "type": "string" },
+    "version": { "type": "integer" },
+    "metadata": { "type": "object" },
+    "components": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  },
+  "required": ["bomFormat", "specVersion", "components"],
+  "additionalProperties": true
+}
