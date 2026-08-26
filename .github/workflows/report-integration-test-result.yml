@@ -16,8 +16,12 @@ name: Report integration test result
 on:
   workflow_dispatch:
     inputs:
-      commit:
-        description: "Commit SHA the run belongs to (the trail name, from the CI build run)"
+      trail:
+        description: "Trail name the run belongs to (the commit SHA, from the CI build run)"
+        type: string
+        required: true
+      fingerprint:
+        description: "Fingerprint of the orders-api artifact to attest the run against"
         type: string
         required: true
       result:
@@ -32,7 +36,7 @@ permissions:
 env:
   KOSLI_ORG: kosli-public
   KOSLI_FLOW: order-system-ci
-  KOSLI_TRAIL: ${{ inputs.commit }}
+  KOSLI_TRAIL: ${{ inputs.trail }}
   KOSLI_API_TOKEN: ${{ secrets.KOSLI_PUBLIC_API_TOKEN }}
   KOSLI_DRY_RUN: ${{ vars.KOSLI_DRY_RUN }}
   # ci-build.yml auto-triggers this workflow right after the staging deploy without setting
@@ -71,28 +75,12 @@ jobs:
           jq . integration-test.json
 
       # The run is attested against the orders-api artifact rather than the trail, so the
-      # release-gate policy matches it. Its fingerprint is whatever the build for this commit
-      # produced.
-      - name: Find the orders-api artifact
-        id: artifact
-        run: |
-          # template_reference_name is the artifact's name from the flow template; the list
-          # comes back latest first, and holds one entry per build of this commit.
-          FINGERPRINT="$(kosli get artifact "${KOSLI_FLOW}:${KOSLI_TRAIL}" --output json \
-            | jq -r '(if type == "array" then . else [.] end)
-                     | map(select(.template_reference_name == "orders-api"))
-                     | .[0].fingerprint // empty')"
-          if [ -z "$FINGERPRINT" ]; then
-            echo "no orders-api artifact on ${KOSLI_FLOW}:${KOSLI_TRAIL} - has the build run?" >&2
-            exit 1
-          fi
-          echo "orders-api-fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
-          echo "orders-api: $FINGERPRINT"
-
+      # release-gate policy matches it. The fingerprint is passed in by the caller (ci-build.yml
+      # already has it from the backend job) rather than looked up here.
       - name: Attest the run
         run: |
           kosli attest custom \
-            --fingerprint "${{ steps.artifact.outputs.orders-api-fingerprint }}" \
+            --fingerprint "${{ inputs.fingerprint }}" \
             --name integration-tests \
             --type integration-test \
             --attestation-data integration-test.json \
