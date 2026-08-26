@@ -143,7 +143,6 @@ jobs:
       - name: Attest the backend
         id: artifact
         run: |
-          kosli fingerprint deploy --artifact-type dir --debug
           ORDERS_API_FINGERPRINT="$(kosli fingerprint deploy --artifact-type dir)"
           echo "orders-api-fingerprint=$ORDERS_API_FINGERPRINT" >> "$GITHUB_OUTPUT"
           # Every later orders-api attestation binds to it via KOSLI_FINGERPRINT.
@@ -159,6 +158,23 @@ jobs:
             echo "| Artifact | \`$ARTIFACT_NAME\` |"
             echo "| Fingerprint | \`$ORDERS_API_FINGERPRINT\` |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate the backend SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: deploy/app.jar
+          format: cyclonedx-json
+          output-file: sbom-orders-api.cdx.json
+          upload-artifact: false
+
+      - name: Attest the backend SBOM
+        run: |
+          kosli attest custom \
+            --fingerprint "$KOSLI_FINGERPRINT" \
+            --name sbom \
+            --type cyclonedx-sbom \
+            --attestation-data sbom-orders-api.cdx.json \
+            --attachments sbom-orders-api.cdx.json
 
       # -------------------------------------------------------------------- 1. Peer review
       # The `pull-request` attestation (trail job) already gathered everything a peer review
@@ -279,7 +295,10 @@ jobs:
         run: make package PLATFORM=${{ matrix.platform }}
 
       - name: Attest the app
+        id: artifact
         run: |
+          FINGERPRINT="$(kosli fingerprint "$ARTIFACT" --artifact-type file)"
+          echo "fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
           kosli attest artifact "$ARTIFACT" \
             --artifact-type file \
             --name "mobileorders-${{ matrix.platform }}"
@@ -299,6 +318,23 @@ jobs:
             --type oversecured \
             --attestation-data oversecured.json \
             --attachments oversecured/report-pass.json
+
+      - name: Generate the SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: ${{ env.ARTIFACT }}
+          format: cyclonedx-json
+          output-file: sbom-mobileorders-${{ matrix.platform }}.cdx.json
+          upload-artifact: false
+
+      - name: Attest the SBOM
+        run: |
+          kosli attest custom \
+            --fingerprint "${{ steps.artifact.outputs.fingerprint }}" \
+            --name sbom \
+            --type cyclonedx-sbom \
+            --attestation-data sbom-mobileorders-${{ matrix.platform }}.cdx.json \
+            --attachments sbom-mobileorders-${{ matrix.platform }}.cdx.json
 
   # ------------------------------------------------------------------------- 5. Publish gate
   publish-gate:

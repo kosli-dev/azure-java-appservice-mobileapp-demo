@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # One-time (idempotent) setup of the org-level Kosli objects this demo needs:
-#   * four custom attestation types, each carrying the jq rules that DECIDE compliance directly
+#   * five custom attestation types - four carrying the jq rules that DECIDE compliance
+#     directly, and cyclonedx-sbom, which carries none and is evidence only
 #   * the peer-review control, judged by a Rego policy against local evidence rather than a type
 #
 # The environment policies (secure-development, production-readiness) are created and attached
@@ -50,6 +51,16 @@ kosli create attestation-type mutation-testing \
   --summary "Killed=.killed" \
   --summary "Survived=.survived" \
   --summary "Not covered=.no_coverage"
+
+echo "==> cyclonedx-sbom attestation type"
+# No --jq: an SBOM is evidence, not a control. Nothing here decides compliance, so this type
+# always reports compliant - see the design decision in CLAUDE.md.
+kosli create attestation-type cyclonedx-sbom \
+  --description "CycloneDX SBOM for a built artifact (jar or mobile app package). Evidence only - no evaluation rules." \
+  --schema kosli/attestation-types/cyclonedx-sbom.schema.json \
+  --summary "Format=.bomFormat" \
+  --summary "Spec version=.specVersion" \
+  --summary "Components=.components | length"
 
 echo "==> oversecured attestation type"
 # The report's severityCounts is what the second rule reads; the third reads the findings the
