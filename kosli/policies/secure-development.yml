@@ -20,11 +20,11 @@ artifacts:
     required: true
   trail-compliance:
     required: true
-  # peer-review-decision is trail-level (see the flow template), not artifact-bound, so it
-  # cannot be named here - `attestations:` only matches attestations on the artifact being
-  # asserted. It is still required: trail-compliance: required: true already covers every
-  # attestation the template demands, trail-level or not, the same way it already covers the
-  # trail's `pull-request` attestation without that being listed here either.
+  # trail-compliance: required: true already covers every attestation the flow template
+  # demands, trail-level or not - including the trail's `pull-request` attestation and
+  # peer-review-decision - so nothing below is strictly load-bearing. Named explicitly anyway,
+  # so the policy itself documents what a compliant artifact went through rather than relying
+  # entirely on the template being read alongside it.
   attestations:
     - name: unit-tests
       type: junit
@@ -32,3 +32,10 @@ artifacts:
       type: sonar
     - name: mutation-tests
       type: custom:mutation-testing
+    - name: sbom
+      type: custom:cyclonedx-sbom
+    # peer-review-decision is trail-level, not artifact-bound - matched here by `for_control`
+    # rather than by artifact binding, which is what that field is for on a `decision`-type
+    # rule (per the published policy schema).
+    - type: decision
+      for_control: peer-review

@@ -9,19 +9,15 @@ name: Report integration test result
 #
 # There is no real integration suite in this demo, so the run is one of two canned reports
 # under integration-tests/. Which one you pick does not decide anything here - the workflow
-# always succeeds. It uploads facts; the jq rules on the `integration-test` attestation type
-# decide, server side, whether the run counts as a pass. That verdict is what the release
-# gate reads.
+# always succeeds. It uploads facts; kosli/policies/integration-tests.rego, evaluated locally
+# against the report, decides whether the run counts as a pass, recorded as a decision against
+# the integration-tests control. That verdict is what the release gate reads.
 
 on:
   workflow_dispatch:
     inputs:
       trail:
         description: "Trail name the run belongs to (the commit SHA, from the CI build run)"
-        type: string
-        required: true
-      fingerprint:
-        description: "Fingerprint of the orders-api artifact to attest the run against"
         type: string
         required: true
       result:
@@ -74,17 +70,37 @@ jobs:
             "integration-tests/result-${VARIANT}.json" > integration-test.json
           jq . integration-test.json
 
-      # The run is attested against the orders-api artifact rather than the trail, so the
-      # release-gate policy matches it. The fingerprint is passed in by the caller (ci-build.yml
-      # already has it from the backend job) rather than looked up here.
-      - name: Attest the run
+      # The report never reaches Kosli as a fact-only attestation any more -
+      # kosli/policies/integration-tests.rego judges integration-test.json directly, and the
+      # verdict is recorded as a decision against the integration-tests control. No
+      # --fingerprint: this binds to the trail itself (KOSLI_FLOW/KOSLI_TRAIL, from the job
+      # env), not to the orders-api artifact - same shape as peer-review-decision.
+      - name: Evaluate and record the integration-tests control decision
         run: |
-          kosli attest custom \
-            --fingerprint "${{ inputs.fingerprint }}" \
-            --name integration-tests \
-            --type integration-test \
-            --attestation-data integration-test.json \
-            --attachments integration-test.json
+          VERDICT="$(kosli evaluate input \
+            --input-file integration-test.json \
+            --policy kosli/policies/integration-tests.rego \
+            --no-assert \
+            --output json)"
+          COMPLIANT="$(echo "$VERDICT" | jq -r '.allow')"
+          echo "$VERDICT" | jq -r '.violations[]? | "integration tests: " + .'
+
+          # One --annotate per violation, keyed violation_1, violation_2, ... - --annotate
+          # keys only allow [A-Za-z0-9_], so a numbered key is as descriptive as it gets.
+          ANNOTATE_ARGS=()
+          i=0
+          while IFS= read -r violation; do
+            i=$((i + 1))
+            ANNOTATE_ARGS+=(--annotate "violation_$i=$violation")
+          done < <(echo "$VERDICT" | jq -r '.violations[]?')
+
+          kosli attest decision \
+            --name integration-tests-decision \
+            --control integration-tests \
+            --compliant="$COMPLIANT" \
+            --attachments integration-test.json \
+            --attachments kosli/policies/integration-tests.rego \
+            "${ANNOTATE_ARGS[@]}"
 
       - name: Summary
         run: |
@@ -97,7 +113,7 @@ jobs:
             echo "| Report | \`integration-tests/result-${VARIANT}.json\` |"
             echo "| Trail | [\`$KOSLI_TRAIL\`](https://app.kosli.com/$KOSLI_ORG/flows/$KOSLI_FLOW/trails/$KOSLI_TRAIL) |"
             echo ""
-            echo "Kosli evaluated the report against the rules on the \`integration-test\`"
-            echo "attestation type. Approve the **release-gate** job on the CI build run for"
-            echo "\`$KOSLI_TRAIL\` to see what it decided."
+            echo "kosli/policies/integration-tests.rego judged the report and recorded a"
+            echo "decision against the integration-tests control. Approve the **release-gate**"
+            echo "job on the CI build run for \`$KOSLI_TRAIL\` to see what it decided."
           } >> "$GITHUB_STEP_SUMMARY"

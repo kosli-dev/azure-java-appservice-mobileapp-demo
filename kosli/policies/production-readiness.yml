@@ -18,7 +18,10 @@ _schema: https://docs.kosli.com/schemas/policy/v1
 
 artifacts:
   attestations:
-    - name: integration-tests
-      type: custom:integration-test
+    # integration-tests is a control now, judged by kosli/policies/integration-tests.rego and
+    # recorded as a trail-level decision - matched here by for_control, the same mechanism
+    # secure-development.yml uses for peer-review, rather than by artifact binding.
+    - type: decision
+      for_control: integration-tests
     - name: release-approval
       type: custom:approval-github-workflow
