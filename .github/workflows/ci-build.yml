@@ -209,6 +209,16 @@ jobs:
             --output json)"
           COMPLIANT="$(echo "$VERDICT" | jq -r '.allow')"
           echo "$VERDICT" | jq -r '.violations[]? | "peer review: " + .'
+
+          # One --annotate per violation, keyed violation_1, violation_2, ... - --annotate
+          # keys only allow [A-Za-z0-9_], so a numbered key is as descriptive as it gets.
+          ANNOTATE_ARGS=()
+          i=0
+          while IFS= read -r violation; do
+            i=$((i + 1))
+            ANNOTATE_ARGS+=(--annotate "violation_$i=$violation")
+          done < <(echo "$VERDICT" | jq -r '.violations[]?')
+
           # Plain name + explicit --fingerprint, not the dotted artifact.attestation form: the
           # fingerprint is already known (KOSLI_FINGERPRINT, set when the artifact was
           # attested above), so there is nothing for name-based template addressing to resolve
@@ -219,7 +229,8 @@ jobs:
             --control peer-review \
             --compliant="$COMPLIANT" \
             --attachments pull-request.json \
-            --attachments kosli/policies/peer-review.rego
+            --attachments kosli/policies/peer-review.rego \
+            "${ANNOTATE_ARGS[@]}"
 
       - name: Attest the unit tests
         run: |
