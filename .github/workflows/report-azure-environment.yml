@@ -10,8 +10,8 @@ name: Report Azure environment
 # the pipeline's own snapshot jobs - those are part of the release story, not the sweep.
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"
+  # schedule:
+  #   - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions:
