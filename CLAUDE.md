@@ -218,6 +218,18 @@ within the `backend` job that the old script never had, so it inherits a new fai
 anything, so this `get attestation` call finds nothing for that trail and the step fails — see
 Gotchas.
 
+**A non-compliant peer-review decision carries its `violations` as annotations, not just in
+the step log.** `kosli evaluate input`'s JSON output has a `violations` array (empty when
+compliant); `ci-build.yml` reads it with `jq '.violations[]?'` and adds one `--annotate
+violation_N=<text>` per entry to the `kosli attest decision` call, so the reason a peer review
+failed is visible on the attestation itself, not only in the CI log. Numbered keys
+(`violation_1`, `violation_2`, ...) rather than the violation text itself, because
+`--annotate`'s keys are restricted to `[A-Za-z0-9_]` — the peer-review.rego violation strings
+have spaces and commas, so they can only be values, never keys. In practice this rego only
+ever produces zero or one violation at a time (`no pull request found` and `requires two
+distinct approvers...` are mutually exclusive by construction), but the loop handles any
+count so it keeps working if the policy grows more violation branches later.
+
 **Peer review's judgment moved off an attestation type and onto a control (customer's call,
 2026-08-25), and the type itself was dropped shortly after (customer's call, same day).**
 `orders-api.peer-review` used to be a custom attestation type carrying the compliance-deciding
