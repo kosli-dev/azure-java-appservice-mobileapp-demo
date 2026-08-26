@@ -465,7 +465,7 @@ jobs:
   report-integration-tests:
     name: Report the integration test run
     runs-on: ubuntu-latest
-    needs: snapshot-after-staging
+    needs: [backend, snapshot-after-staging]
     permissions:
       contents: read
       actions: write
@@ -480,7 +480,8 @@ jobs:
           gh workflow run report-integration-test-result.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref "${{ github.ref_name }}" \
-            -f commit="$KOSLI_TRAIL"
+            -f trail="$KOSLI_TRAIL" \
+            -f fingerprint="${{ needs.backend.outputs.orders-api-fingerprint }}"
 
   # ------------------------------------------------------------------------ 9. Release gate
   release-gate:

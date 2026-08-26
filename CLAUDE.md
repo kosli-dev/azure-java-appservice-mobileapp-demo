@@ -682,9 +682,18 @@ fingerprint, not the trail.** Conceptually they are about the release rather tha
 and they were trail-level until the controls moved into the policies. A policy's
 `attestations:` rules match attestations on the artifact being asserted, and the docs do not
 say whether a trail-level attestation counts — betting on it would fail both gates for a
-reason that reads like a missing test. The release-gate job has the fingerprint from
-`needs.backend.outputs.orders-api-fingerprint`; the integration test workflow looks it up with
-`kosli get artifact order-system-ci:<sha> --output json`.
+reason that reads like a missing test. Attesting `integration-tests` to the mobile artifacts
+too was tried and reverted the same day (customer's call, 2026-08-26): `release-gate` and
+`publish-gate` only ever assert the `orders-api` fingerprint, so a mobile attestation would
+never be read back by any policy — pure evidence with no gate to matter to, not worth the
+extra attest calls. The release-gate job has the fingerprint from
+`needs.backend.outputs.orders-api-fingerprint`. `report-integration-test-result.yml` no longer
+looks the fingerprint up itself with `kosli get artifact` — the caller already has it, so
+`ci-build.yml`'s auto-trigger step (which now needs `backend`, not just
+`snapshot-after-staging`) passes it straight through as a required `fingerprint` input,
+alongside `trail` (renamed from `commit` — it is the trail name, not a commit lookup key, and
+the rename makes that explicit now that the workflow no longer re-derives anything from it
+beyond `KOSLI_TRAIL`). Not yet run live in this form.
 
 **`deploy/build-time.txt` exists to make each build its own artifact.** The JAR is
 byte-reproducible - `project.build.outputTimestamp` is pinned in the POM, and Spring Boot's
