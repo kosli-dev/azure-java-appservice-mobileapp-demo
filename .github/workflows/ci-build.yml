@@ -355,7 +355,9 @@ jobs:
   publish-gate:
     name: Can release to staging?
     runs-on: ubuntu-latest
-    needs: [backend, peer-review]
+    needs: [backend, peer-review, mobile]
+    env:
+      KOSLI_ENV_STAGING: ${{ vars.KOSLI_ENVIRONMENT_STAGING || 'azure-appservice-staging' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -364,13 +366,29 @@ jobs:
         with:
           version: "2"
 
-      # No --policy: with neither --policy nor --environment, the artifact is asserted
-      # against its flow template, which is everything the build owed. Policies are the
-      # release gate's business.
-      - name: Assert the flow template
+      # An environment with no policies attached makes the assert below pass vacuously -
+      # same guard release-gate uses, and the same reason it's needed here.
+      - name: Check the staging environment has policies attached
+        run: |
+          attached=$(kosli get environment "$KOSLI_ENV_STAGING" --output json | jq '.policies // [] | length')
+          echo "$KOSLI_ENV_STAGING has $attached policies attached"
+          if [ "$attached" -eq 0 ]; then
+            echo "::error::No policies attached to $KOSLI_ENV_STAGING - the publish gate would"\
+                 " pass no matter what. Run the Bootstrap Kosli workflow with 'create environment'."
+            exit 1
+          fi
+
+      # Asserted against the *environment*, not the flow template directly: with
+      # --environment, Kosli judges the artifact by every policy attached to staging -
+      # currently just secure-development.yml (provenance, trail-compliance, and the
+      # build-time controls). trail-compliance spans the whole trail, not just this
+      # artifact, which is why this job now needs `mobile` too - without that edge it could
+      # run while a leg is still going, same reasoning as release-gate needing `mobile`.
+      - name: Assert against staging environment
         run: |
           kosli assert artifact \
             --fingerprint "${{ needs.backend.outputs.orders-api-fingerprint }}" \
+            --environment "$KOSLI_ENV_STAGING" \
             --flow "$KOSLI_FLOW"
 
       - name: Explain how to unblock
@@ -381,9 +399,9 @@ jobs:
           The publish gate blocked this component.
 
           Trail:    https://app.kosli.com/${KOSLI_ORG}/flows/${KOSLI_FLOW}/trails/${KOSLI_TRAIL}
-          Template: kosli/flow-templates/order-system-ci.yml
+          Policies: whatever is attached to https://app.kosli.com/${KOSLI_ORG}/environments/${KOSLI_ENV_STAGING}/snapshots/?active_tab=policies
 
-          Fix the failing control. 
+          Fix the failing control.
           ==========================================================================
           EOF
           )

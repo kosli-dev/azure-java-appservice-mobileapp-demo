@@ -305,8 +305,10 @@ already-proven pattern to `peer-review-decision`. Splitting the job also kills t
 2026-08-25 live run, see State) — the `peer-review` job never sets `KOSLI_FINGERPRINT` in the
 first place, so `kosli get attestation pull-request --trail ...` has nothing to collide with.
 `publish-gate` gained `peer-review` in its `needs:` (alongside `backend`) so it still waits for
-the decision before asserting the template; `release-gate` needed no change, since it already
-depends on `publish-gate` transitively. Not yet run live.
+the decision before asserting; `release-gate` needed no change, since it already depends on
+`publish-gate` transitively. (`publish-gate` went on to gain `mobile` too, for an unrelated
+reason — see the "publish gate asserts the staging environment" design decision below.) Not
+yet run live.
 
 **The gate is `kosli assert artifact`, not `kosli evaluate trail` with rego.**
 `kosli evaluate` is a beta feature that has to be enabled per org — not something to bet a
@@ -380,20 +382,21 @@ job) actually runs. That mismatch broke a real dispatch (run 32942853972, see St
 step failed with `mutation-tests` non-compliant even though the override had already landed
 and the printed table showed `compliant: true`. The intermediate `rerun-mutation-tests.yml`
 avoided this by asserting against the flow template directly (`--flow order-system-ci`, no
-`--policy`) — the same check `publish-gate` runs — but that only answers "did the build
-produce everything it owed", not "would this be allowed to run in staging/production", which
-is the question a waiver dispatched after a failed release is actually being asked to answer.
-So the restored workflow's second job, `recheck`, is matrix-ed over both Azure environments
-(`vars.KOSLI_ENVIRONMENT_STAGING || 'azure-appservice-staging'` and
-`vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod'`, the same fallback pattern
-`snapshot-azure-environment.yml` uses) and asserts `kosli assert artifact --fingerprint ...
---environment <env> --flow order-system-ci` against each — exactly what `release-gate` asserts
-for production, and the closest equivalent for staging, which nothing else in the pipeline
-asserts by `--environment` today (`publish-gate` only ever checks the template). Each leg
-guards against the same vacuous-pass failure mode `release-gate` already guards against - an
-environment with no policies attached would otherwise print `COMPLIANT` no matter what - with
-the identical `kosli get environment ... | jq '.policies | length'` check before asserting.
-Not yet run live in this form - the override POST and the `--policy publish-gate` fix were
+`--policy`) — the same check `publish-gate` ran *at the time* — but that only answered "did
+the build produce everything it owed", not "would this be allowed to run in
+staging/production", which is the question a waiver dispatched after a failed release is
+actually being asked to answer. So the restored workflow's second job, `recheck`, is
+matrix-ed over both Azure environments (`vars.KOSLI_ENVIRONMENT_STAGING ||
+'azure-appservice-staging'` and `vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod'`, the same
+fallback pattern `snapshot-azure-environment.yml` uses) and asserts `kosli assert artifact
+--fingerprint ... --environment <env> --flow order-system-ci` against each — the same check
+`publish-gate` and `release-gate` run for staging and production respectively, now that
+`publish-gate` also asserts `--environment` (see the design decision below, 2026-08-26,
+written after this one). Each leg guards against the same vacuous-pass failure mode
+`release-gate` and `publish-gate` already guard against - an environment with no policies
+attached would otherwise print `COMPLIANT` no matter what - with the identical `kosli get
+environment ... | jq '.policies | length'` check before asserting. Not yet run live in this
+form - the override POST and the `--policy publish-gate` fix were
 each carried over from something that *did* run live at some point, but the matrix-ed
 environment re-check is new.
 
@@ -445,11 +448,13 @@ released with one platform missing.
 **The build is four parallel jobs behind a `trail` job.** `peer-review`, `backend` and the two
 `mobile` matrix legs all attest to the same trail, so the trail has to exist before any of
 them starts — that is the whole job of `trail`, and it is why they cannot race creating it.
-`release-gate` needs `mobile` as well as `backend`: it asserts trail compliance, which
-includes both `oversecured` attestations, so without that edge it could run while a leg is
-still going. `publish-gate` needs `backend` and `peer-review` (not `mobile`): it judges only
-the backend's controls, but that now includes the trail-level `peer-review-decision`, produced
-by a job of its own rather than by `backend` — see the 2026-08-26 design decision above.
+Both gates now need `mobile` as well as `backend`, for the same reason: each asserts
+`--environment` (staging for `publish-gate`, production for `release-gate`), and
+`secure-development.yml`'s `trail-compliance: required: true` spans the whole trail, both
+`oversecured` attestations included, so without that edge either gate could run while a mobile
+leg was still going. `publish-gate` also needs `peer-review`: `peer-review-decision` is
+trail-level, produced by a job of its own rather than by `backend` — see the 2026-08-26 design
+decision above.
 
 **The mobile control is a canned Oversecured report** (customer's call, 2026-08-25),
 replacing the mobsfscan SARIF scan, which is gone along with `make scan`.
@@ -472,28 +477,44 @@ Oversecured omits a severity from `severityCounts` when its count is zero rather
 reporting `0`.
 
 **The flow template lists only what the build produces; post-build controls live in policies**
-(customer's call, 2026-08-25). The template is also the yardstick `kosli assert artifact` uses
-at the publish gate, which runs minutes before the integration test result and the approval
-exist — with them in the template, the publish gate failed every run on controls that could
-not possibly be there yet. So `integration-tests` and `release-approval` are named in
-`production-readiness.yml` instead. Putting them back in the template
-re-breaks the publish gate. `peer-review-decision` is the exception that proves the rule: it
-*is* in the template (customer's call, 2026-08-25), because unlike the other two it is
-produced by the time `publish-gate` runs — originally because it was attested inside the
-`backend` job itself; since 2026-08-26 because the `peer-review` job it now lives in is a
-dependency of `publish-gate` in its own right (`needs: [backend, peer-review]`). Either way
-there is no publish-gate-breaking timing problem to design around, so it belongs in the
-template like every other build-time control, trail-level or not.
+(customer's call, 2026-08-25). Every policy's `trail-compliance: required: true` ultimately
+judges the template — directly for `publish-gate`'s and `release-gate`'s own environments, and
+this is still what makes the template the yardstick that matters, even though `publish-gate`
+now asserts `--environment azure-appservice-staging` rather than the template file directly
+(see the design decision above). `publish-gate` runs minutes before the integration test
+result and the approval exist — with them in the template, `trail-compliance` would fail
+every run on controls that could not possibly be there yet. So `integration-tests` and
+`release-approval` are named in `production-readiness.yml` instead, attached to production
+alone, never to staging. Putting them in the template, or in `secure-development.yml` (attached
+to both environments), re-breaks the publish gate. `peer-review-decision` is the exception
+that proves the rule: it *is* in the template (customer's call, 2026-08-25), because unlike
+the other two it is produced by the time `publish-gate` runs — originally because it was
+attested inside the `backend` job itself; since 2026-08-26 because the `peer-review` job it
+now lives in is a dependency of `publish-gate` in its own right (`needs: [backend,
+peer-review, mobile]`). Either way there is no publish-gate-breaking timing problem to design
+around, so it belongs in the template like every other build-time control, trail-level or not.
 
-**The publish gate asserts no policy** (customer's call, 2026-08-25). `kosli assert artifact`
-with neither `--policy` nor `--environment` judges the artifact against its flow template,
-which is the question that gate asks: did the build produce everything it owed? Policies
-belong to the release gate. `kosli/policies/publish-gate.yml` was therefore unused; it was
-kept for a while as documentation of the same control set in policy form, then **deleted**
-(customer's call, 2026-08-25) along with its `create policy` call in `bootstrap_kosli.sh` -
-a file nothing reads is a file that goes stale. The `publish-gate` policy object still exists
-in `kosli-public`, attached to nothing; there is no `kosli delete policy`, so removing it
-needs the UI or the API.
+**The publish gate asserts the staging environment (customer's call, 2026-08-26), reversing an
+earlier decision to assert no policy at all (customer's call, 2026-08-25).** The original
+reasoning still explains why `kosli/policies/publish-gate.yml` is gone: `kosli assert artifact
+--environment` judges the artifact against every policy attached to that environment, and
+staging carries only `secure-development.yml`, so a standalone policy asserting almost the
+same control set would only drift out of sync with it, the same reasoning that got
+`release-gate.yml` deleted in favour of `--environment azure-appservice-prod`. What changed is
+*which* assert mode: `--flow "$KOSLI_FLOW"` alone (neither `--policy` nor `--environment`)
+judges the artifact against its flow template directly - did the build produce everything it
+owed - which is artifact-scoped: it does not pull in other artifacts' own required
+attestations (see the peer-review-decision trail-level design decision above for why this
+matters). `--environment azure-appservice-staging --flow "$KOSLI_FLOW"` asks a different
+question - would this artifact be allowed to run in staging - and answering it pulls in every
+policy attached there, currently just `secure-development.yml`, whose `trail-compliance:
+required: true` spans the *whole trail*, mobile legs included. That is why `publish-gate`
+gained `mobile` in its `needs:` alongside `backend` and `peer-review` - without that edge it
+could assert while a mobile leg was still going, the same race `release-gate` already guards
+against by needing `mobile` itself. The job also gained the same
+"environment has policies attached" guard `release-gate` uses, for the same vacuous-pass
+reason (see below). The `publish-gate` policy object still exists in `kosli-public`, attached
+to nothing; there is no `kosli delete policy`, so removing it needs the UI or the API.
 
 **The release gate asserts the production environment, not a policy of its own**
 (customer's call, 2026-08-25). `kosli assert artifact --environment azure-appservice-prod`
@@ -526,10 +547,16 @@ reaches App Service is the one Kosli judged. Nothing else in the repo deploys.
 **Staging sits between the two gates** (customer's call, 2026-08-25). `deploy-staging` needs
 `[backend, publish-gate]`, and `release-gate` gained `needs: deploy-staging`, so the order is
 publish-gate → staging → approval → release-gate → production. Staging is gated by
-publish-gate alone: no `--policy`, no second assert. That is deliberate — publish-gate already
-asks "did the build produce everything it owed?", which is exactly the bar for reaching the
-place where the integration tests are supposed to run, and a policy that could block staging
-would block the very testing whose result the release gate then requires.
+publish-gate alone: no second assert after it. Publish-gate itself now asserts the staging
+environment directly (see the design decision above) rather than the flow template, but the
+question it asks is still the pre-release one — would this be allowed onto staging — not
+anything requiring the integration test run or the approval: those live only in
+`production-readiness.yml`, attached to production alone, so staging's one attached policy
+(`secure-development.yml`) still cannot block on a control that does not exist yet. A policy
+that could block staging on the release controls would block the very testing whose result
+the release gate then requires — that constraint is why `production-readiness.yml` is
+deliberately not attached to staging, not a reason to keep publish-gate off `--environment`
+altogether.
 
 **The environment policies are split along the same line as the gates** (customer's call,
 2026-08-25). `kosli/policies/secure-development.yml` — provenance, trail-compliance and the
