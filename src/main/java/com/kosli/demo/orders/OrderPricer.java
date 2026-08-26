@@ -14,8 +14,8 @@ import java.math.RoundingMode;
 public final class OrderPricer {
 
     static final BigDecimal UNIT_PRICE = new BigDecimal("10.00");
-    static final BigDecimal EXPEDITED_FEE = new BigDecimal("7.70");
-    static final int BULK_THRESHOLD = 10;
+    static final BigDecimal EXPEDITED_FEE = new BigDecimal("7.85");
+    static final int BULK_THRESHOLD = 10; 
     static final BigDecimal BULK_DISCOUNT = new BigDecimal("0.05");
 
     private OrderPricer() {
