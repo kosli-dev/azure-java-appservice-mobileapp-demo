@@ -97,9 +97,8 @@ lower threshold and re-attested for real, then re-checked the gate the correct w
 no `--policy`). The customer then asked for the waiver back (same day) — see the "waiver
 mechanism is back" design decision below — so the file was restored under its original name,
 `.github/workflows/waive-attestation.yml`, POSTing an override instead of re-running PIT, and
-re-checking staging and production's actual attached policies (`--environment`, matrix-ed)
-rather than either the flow template or a standalone policy object. Not yet run live in this
-form.
+re-checking staging's actual attached policy (`--environment`) rather than either the flow
+template or a standalone policy object. Not yet run live in this form.
 
 The `sbom` attestations (added 2026-08-26) took two live rounds to land. **Round one**
 (all three legs): SBOM generation itself failed - `anchore/sbom-action@v0`'s `path` input
@@ -374,30 +373,30 @@ is the one control that fails via an env var in this demo, hence the defaults, b
 artifact-bound attestation on the trail can be waived by overriding them. `mutation_threshold`
 is gone as an input, along with the checkout, `setup-java` and PIT run it existed to drive.
 
-**The old `waive-attestation.yml`'s bug is fixed, not reintroduced, by re-checking real
-environment policies instead of any standalone policy object.** Its original "Re-check the
-publish gate" step asserted `--policy publish-gate`, the orphaned policy object left attached
-to nothing (see the publish-gate design decision below) — not the check `publish-gate` (the
-job) actually runs. That mismatch broke a real dispatch (run 32942853972, see State above): the
+**The old `waive-attestation.yml`'s bug is fixed, not reintroduced, by re-checking the real
+staging policy instead of any standalone policy object.** Its original "Re-check the publish
+gate" step asserted `--policy publish-gate`, the orphaned policy object left attached to
+nothing (see the publish-gate design decision below) — not the check `publish-gate` (the job)
+actually runs. That mismatch broke a real dispatch (run 32942853972, see State above): the
 step failed with `mutation-tests` non-compliant even though the override had already landed
 and the printed table showed `compliant: true`. The intermediate `rerun-mutation-tests.yml`
 avoided this by asserting against the flow template directly (`--flow order-system-ci`, no
-`--policy`) — the same check `publish-gate` ran *at the time* — but that only answered "did
-the build produce everything it owed", not "would this be allowed to run in
-staging/production", which is the question a waiver dispatched after a failed release is
-actually being asked to answer. So the restored workflow's second job, `recheck`, is
-matrix-ed over both Azure environments (`vars.KOSLI_ENVIRONMENT_STAGING ||
-'azure-appservice-staging'` and `vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod'`, the same
-fallback pattern `snapshot-azure-environment.yml` uses) and asserts `kosli assert artifact
---fingerprint ... --environment <env> --flow order-system-ci` against each — the same check
-`publish-gate` and `release-gate` run for staging and production respectively, now that
-`publish-gate` also asserts `--environment` (see the design decision below, 2026-08-26,
-written after this one). Each leg guards against the same vacuous-pass failure mode
-`release-gate` and `publish-gate` already guard against - an environment with no policies
-attached would otherwise print `COMPLIANT` no matter what - with the identical `kosli get
-environment ... | jq '.policies | length'` check before asserting. Not yet run live in this
-form - the override POST and the `--policy publish-gate` fix were
-each carried over from something that *did* run live at some point, but the matrix-ed
+`--policy`) — the same check `publish-gate` ran *at the time*. The restored workflow's second
+job, `recheck`, instead asserts `kosli assert artifact --fingerprint ... --environment
+"$KOSLI_ENV_STAGING" --flow order-system-ci` against staging only
+(`vars.KOSLI_ENVIRONMENT_STAGING || 'azure-appservice-staging'`, the same fallback pattern
+`snapshot-azure-environment.yml` and `publish-gate` use) — the same check `publish-gate`
+itself now runs (see the design decision below, 2026-08-26, written after this one). Staging
+only, not production, on purpose (customer's call, 2026-08-26, narrowing an initial two-leg
+matrix): a waiver's whole point is unblocking the gate that is actually stuck, which is
+`publish-gate`, and `release-gate` still does its own real assert against production later,
+once the release controls exist — a stale pre-approval re-check against production here would
+tell the operator nothing that gate doesn't already check for itself. The job guards against
+the same vacuous-pass failure mode `release-gate` and `publish-gate` already guard against -
+an environment with no policies attached would otherwise print `COMPLIANT` no matter what -
+with the identical `kosli get environment ... | jq '.policies | length'` check before
+asserting. Not yet run live in this form - the override POST and the `--policy publish-gate`
+fix were each carried over from something that *did* run live at some point, but the
 environment re-check is new.
 
 This is still not a precedent for every failing control needing a waiver path: it is one
