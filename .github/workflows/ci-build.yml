@@ -169,7 +169,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
@@ -247,7 +247,7 @@ jobs:
       # quality gate result straight to this trail once the scan below completes. The
       # sonar.analysis.kosli_* args are what tell it which flow/trail/artifact to attest to.
       - name: Run the SonarCloud scan
-        uses: SonarSource/sonarqube-scan-action@v5
+        uses: sonarsource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
