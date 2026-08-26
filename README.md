@@ -42,7 +42,7 @@ Between them they cover points 1, 2 and 3 of the customer's demo scenario.
 | --- | --- | --- |
 | Evaluate the pull request for a peer review | `pull_request` attestation for the raw evidence, plus a `peer-review` control judged by a Rego policy against that same attestation's data, fetched back from Kosli: two distinct approvers **or** one approver who wrote none of the code | [`kosli/policies/peer-review.rego`](kosli/policies/peer-review.rego) |
 | Evaluate a SonarQube quality gate | A real SonarCloud scan runs in CI; SonarCloud attests the quality-gate result straight to the trail via Kosli's built-in `sonar` attestation type, over the webhook configured on the Sonar project | [`sonar-project.properties`](sonar-project.properties), [`.github/workflows/ci-build.yml`](.github/workflows/ci-build.yml) |
-| Create a waiver for mutation testing | PIT results are attested with the threshold they are judged against. The score is below threshold on purpose, so the gate blocks — then the failure is waived with a recorded reason | [`scripts/waive_attestation.sh`](scripts/waive_attestation.sh), [`.github/workflows/waive-attestation.yml`](.github/workflows/waive-attestation.yml) |
+| Recover from a failing mutation score | PIT results are attested with the threshold they are judged against. The score is below threshold on purpose, so the gate blocks — mutation testing is re-run with a different threshold and re-attested against the same artifact | [`.github/workflows/rerun-mutation-tests.yml`](.github/workflows/rerun-mutation-tests.yml) |
 | Check if this component may be published, and show how the policy is created | `kosli assert artifact` in its own pipeline job, against the flow template; the release gate then asserts the production environment's policies, created from YAML files in this repo | [`kosli/flow-templates/order-system-ci.yml`](kosli/flow-templates/order-system-ci.yml), [`kosli/policies/secure-development.yml`](kosli/policies/secure-development.yml), [`kosli/policies/production-readiness.yml`](kosli/policies/production-readiness.yml) |
 
 Clearing the publish gate puts the service on the **staging** App Service, not the production
@@ -73,7 +73,6 @@ Makefile                           scan and package the mobile app (Docker, no t
 
 scripts/bootstrap_kosli.sh         creates the attestation types and the policy
 scripts/mutation_attestation.py    turns the PIT XML report into attestation data
-scripts/waive_attestation.sh       records a waiver (override) with a reason
 
 .github/workflows/ci-build.yml     the pipeline: build → attest → gates → deploy
 .github/actions/deploy-appservice/ deploy an approved build to one App Service web app
@@ -81,7 +80,7 @@ scripts/waive_attestation.sh       records a waiver (override) with a reason
 .github/workflows/report-integration-test-result.yml  report a run to a trail
 .github/workflows/pr.yml           fast checks on the pull request
 .github/workflows/kosli-bootstrap.yml   run the bootstrap script from the Actions tab
-.github/workflows/waive-attestation.yml waive a blocked control from the Actions tab
+.github/workflows/rerun-mutation-tests.yml  re-run PIT with a different threshold from the Actions tab
 .github/workflows/snapshot-azure-environment.yml  report both environments (called, not triggered)
 .github/workflows/report-azure-environment.yml  the periodic sweep (optional)
 ```
@@ -187,7 +186,8 @@ Optional variables that tune the demo without editing code:
 | `INTEGRATION_TEST_DEFAULT_RESULT` | unset (falls back to `pass`) | Which canned report `deploy-staging`'s auto-triggered **Report integration test result** run sends when nobody picks `pass`/`fail` by hand. Set to `fail` to have the release gate block by default. |
 
 GitHub environments gate four jobs: `production-release` the release gate, `production` the
-production deploy, `staging` the staging deploy, and `waivers` the waiver workflow. **Add
+production deploy, `staging` the staging deploy, and `mutation-rerun` the mutation test rerun
+workflow. **Add
 required reviewers to `production-release`** — without them the pipeline runs straight
 through, there is nothing to halt, and the approval the release gate wants to attest never
 exists. Leave `staging` unprotected: the halt belongs to production, and a build only reaches
@@ -228,23 +228,24 @@ fails, the component may not be published, and the job log prints how to unblock
 answer to "may this component be published?" — and it is the same answer for anyone asking,
 whether that is CI, a release manager or an auditor.
 
-**4. Waive it.**
-Either in the Kosli UI (open the `mutation-tests` attestation → **Override** → give a
-reason), or from the Actions tab with the **Waive an attestation** workflow:
+**4. Re-run mutation testing with a lower threshold.**
+From the Actions tab, run the **Rerun mutation tests** workflow:
 
 ```
-trail:       <the commit sha>
-fingerprint: <from the build-and-attest job summary>
-reason:      Mutation score signed off by QA under ORD-482; tests hardened next sprint
+trail:               <the commit sha>
+fingerprint:         <from the build-and-attest job summary>
+mutation_threshold:  70
 ```
 
-Kosli recalculates the trail. The control is now compliant *and* carries the waiver: who
-waived it, when, and why. Nothing was deleted or edited — the original failure is still
-there, with the waiver attached to it.
+It checks out that same commit, runs PIT again (the score doesn't change — it's the same
+code) and attests a fresh `mutation-tests` result against the same artifact. Kosli judges the
+latest attestation of a given name, so this one is now what the gate sees; the original
+below-threshold attestation stays on the trail too, as a record of what the first run found.
 
 **5. Re-run the publish gate.**
-Re-run the failed job on the CI build run. The gate passes, and the pipeline moves on to the
-release gate — see [Point 3](#point-3--the-release-process).
+Re-run the failed job on the CI build run — or just read the "Re-check the publish gate" step
+of the workflow from step 4, which already re-asserted it. Either way it now passes, and the
+pipeline moves on to the release gate — see [Point 3](#point-3--the-release-process).
 
 The Sonar quality gate now reflects the real code, not a canned variant. To show it blocking
 instead, push a change that trips the SonarCloud quality gate for this project (e.g. a new
@@ -462,8 +463,8 @@ would run against the built APK/IPA and its report would be fetched from Oversec
 the attestation type, the rules and the gate would not change.
 
 **Mutation testing does not fail the Maven build.** PIT reports the score and Maven carries
-on; the threshold is enforced by Kosli, which is the point — the control and the waiver live
-in one place, not in a build file that any developer can edit.
+on; the threshold is enforced by Kosli, which is the point — the control lives in one place,
+not in a build file that any developer can edit.
 
 **The release gate asserts the production environment, not a policy of its own.**
 `kosli assert artifact --environment azure-appservice-prod` judges the artifact against every
