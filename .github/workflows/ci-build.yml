@@ -4,8 +4,9 @@ name: CI build
 # controlled and released together from one commit on main.
 #
 #   trail                      create the flow and the trail for this commit
-#   backend                    build, test and attest the Java service     \ in parallel
-#   mobile                     package, scan and attest each mobile app    /
+#   peer-review                judge the peer review from the trail's pull-request evidence \
+#   backend                    build, test and attest the Java service                       | in parallel
+#   mobile                     package, scan and attest each mobile app                      /
 #   publish-gate               may this component be released to staging?
 #   deploy-staging             put it on the staging App Service
 #   snapshot-after-staging     report what is now running in both environments
@@ -102,6 +103,67 @@ jobs:
             echo "2. Approve **release-gate** below. Kosli decides from there."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # -------------------------------------------------------------------- 1. Peer review
+  # Independent of backend/mobile: it only needs the trail's `pull-request` attestation
+  # (trail job), not the built artifact, and it judges the trail rather than any one artifact
+  # - see the flow template and kosli/policies/secure-development.yml.
+  peer-review:
+    name: Judge the peer review
+    runs-on: ubuntu-latest
+    needs: trail
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Kosli CLI
+        uses: kosli-dev/setup-cli-action@v5
+        with:
+          version: "2"
+
+      # The `pull-request` attestation (trail job) already gathered everything a peer review
+      # needs to judge - who approved, who wrote the code - so there is no separate GitHub API
+      # call here: just read that attestation back.
+      - name: Fetch the pull request attestation
+        run: |
+          kosli get attestation pull-request \
+            --flow "$KOSLI_FLOW" \
+            --trail "$KOSLI_TRAIL" \
+            --output json | jq '.[0]' > pull-request.json
+
+      # The facts never reach Kosli as a second attestation - kosli/policies/peer-review.rego
+      # judges pull-request.json directly, and the verdict is recorded as a decision against
+      # the `peer-review` control. peer-review-decision is a trail-level attestation in the
+      # flow template (order-system-ci.yml), so a bad peer review fails trail-compliance - and
+      # so publish-gate - as soon as this job finishes, same as unit-tests or mutation-tests.
+      - name: Evaluate and record the peer review control decision
+        run: |
+          VERDICT="$(kosli evaluate input \
+            --input-file pull-request.json \
+            --policy kosli/policies/peer-review.rego \
+            --no-assert \
+            --output json)"
+          COMPLIANT="$(echo "$VERDICT" | jq -r '.allow')"
+          echo "$VERDICT" | jq -r '.violations[]? | "peer review: " + .'
+
+          # One --annotate per violation, keyed violation_1, violation_2, ... - --annotate
+          # keys only allow [A-Za-z0-9_], so a numbered key is as descriptive as it gets.
+          ANNOTATE_ARGS=()
+          i=0
+          while IFS= read -r violation; do
+            i=$((i + 1))
+            ANNOTATE_ARGS+=(--annotate "violation_$i=$violation")
+          done < <(echo "$VERDICT" | jq -r '.violations[]?')
+
+          # No --fingerprint: this attests to the trail itself (KOSLI_FLOW/KOSLI_TRAIL, from
+          # the job env), not to any one artifact - same as the trail job's own
+          # `pull-request` attestation.
+          kosli attest decision \
+            --name peer-review-decision \
+            --control peer-review \
+            --compliant="$COMPLIANT" \
+            --attachments pull-request.json \
+            --attachments kosli/policies/peer-review.rego \
+            "${ANNOTATE_ARGS[@]}"
+
   backend:
     name: Build and attest the backend
     runs-on: ubuntu-latest
@@ -178,59 +240,6 @@ jobs:
             --type cyclonedx-sbom \
             --attestation-data sbom-orders-api.cdx.json \
             --attachments sbom-orders-api.cdx.json
-
-      # -------------------------------------------------------------------- 1. Peer review
-      # The `pull-request` attestation (trail job) already gathered everything a peer review
-      # needs to judge - who approved, who wrote the code - so there is no separate GitHub API
-      # call here: just read that attestation back.
-      - name: Fetch the pull request attestation
-        # KOSLI_FINGERPRINT (set above, for the artifact) and --trail are mutually exclusive
-        # on `get attestation` - the CLI binds --fingerprint from that env var even though
-        # this call never passes the flag itself, so it has to be cleared for this step.
-        env:
-          KOSLI_FINGERPRINT: ""
-        run: |
-          kosli get attestation pull-request \
-            --flow "$KOSLI_FLOW" \
-            --trail "$KOSLI_TRAIL" \
-            --output json | jq '.[0]' > pull-request.json
-
-      # The facts never reach Kosli as a second attestation - kosli/policies/peer-review.rego
-      # judges pull-request.json directly, and the verdict is recorded as a decision against
-      # the `peer-review` control. peer-review-decision is in the flow template
-      # (order-system-ci.yml), so a bad peer review fails trail-compliance - and so
-      # publish-gate - as soon as this job finishes, same as unit-tests or mutation-tests.
-      - name: Evaluate and record the peer review control decision
-        run: |
-          VERDICT="$(kosli evaluate input \
-            --input-file pull-request.json \
-            --policy kosli/policies/peer-review.rego \
-            --no-assert \
-            --output json)"
-          COMPLIANT="$(echo "$VERDICT" | jq -r '.allow')"
-          echo "$VERDICT" | jq -r '.violations[]? | "peer review: " + .'
-
-          # One --annotate per violation, keyed violation_1, violation_2, ... - --annotate
-          # keys only allow [A-Za-z0-9_], so a numbered key is as descriptive as it gets.
-          ANNOTATE_ARGS=()
-          i=0
-          while IFS= read -r violation; do
-            i=$((i + 1))
-            ANNOTATE_ARGS+=(--annotate "violation_$i=$violation")
-          done < <(echo "$VERDICT" | jq -r '.violations[]?')
-
-          # Plain name + explicit --fingerprint, not the dotted artifact.attestation form: the
-          # fingerprint is already known (KOSLI_FINGERPRINT, set when the artifact was
-          # attested above), so there is nothing for name-based template addressing to resolve
-          # that the fingerprint doesn't already say more directly.
-          kosli attest decision \
-            --name peer-review-decision \
-            --fingerprint "$KOSLI_FINGERPRINT" \
-            --control peer-review \
-            --compliant="$COMPLIANT" \
-            --attachments pull-request.json \
-            --attachments kosli/policies/peer-review.rego \
-            "${ANNOTATE_ARGS[@]}"
 
       - name: Attest the unit tests
         run: |
@@ -352,7 +361,7 @@ jobs:
   publish-gate:
     name: Can release to staging?
     runs-on: ubuntu-latest
-    needs: backend
+    needs: [backend, peer-review]
     steps:
       - uses: actions/checkout@v5
 

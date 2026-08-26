@@ -29,21 +29,22 @@ trail is the commit:
 
 | Artifact | Attestations |
 | --- | --- |
-| `orders-api` | `peer-review-decision`, `unit-tests`, `sonar-quality-gate`, `mutation-tests`, `sbom` |
+| `orders-api` | `unit-tests`, `sonar-quality-gate`, `mutation-tests`, `sbom` |
 | `mobileorders-android` | `oversecured`, `sbom` |
 | `mobileorders-ios` | `oversecured`, `sbom` |
-| (trail level) | `pull-request`, `integration-tests`, `release-approval` |
+| (trail level) | `pull-request`, `peer-review-decision`, `integration-tests`, `release-approval` |
 
 `orders-api.peer-review` is gone (customer's call, 2026-08-25): it had already been reduced to
 evidence only, with no compliance-deciding jq rules, once the judgment moved to a control —
 and evidence nobody reads back from Kosli doesn't need to be attested. The facts now come from
 the trail's own `pull-request` attestation, fetched back with `kosli get attestation` and fed
-straight into `kosli evaluate input --policy kosli/policies/peer-review.rego` in the same job —
-no second GitHub API call, no custom JSON (`scripts/peer_review_attestation.py` is gone). The
-verdict is recorded as `orders-api.peer-review-decision`, a `decision`-type attestation against
-the `peer-review` control. It *is* in the flow template — it's produced in the same job as the
-evidence it judges, so nothing stops it being there, and being there means publish-gate blocks
-on a bad peer review, same as before.
+straight into `kosli evaluate input --policy kosli/policies/peer-review.rego`. The verdict is
+recorded as `peer-review-decision`, a `decision`-type attestation against the `peer-review`
+control — **trail-level, not bound to `orders-api`, and judged in its own `peer-review` job**
+(customer's call, 2026-08-26; previously it was `orders-api.peer-review-decision`, attested
+with `--fingerprint` in the `backend` job — see the design decision below for why that
+changed). It *is* in the flow template — being there means publish-gate blocks on a bad peer
+review, same as before.
 
 Template: `kosli/flow-templates/order-system-ci.yml`. The `orders-api-ci`, `mobileorders` and
 `order-system-release` flows still exist in `kosli-public` with their history; nothing writes
@@ -173,11 +174,13 @@ Not verified, and the first live run is the test of it:
   orders-api.peer-review-decision`, no `--fingerprint`) split into `attestation_name:
   "peer-review-decision"` plus `target_artifacts: ["orders-api"]`; a plain dry run (`--name
   peer-review-decision --fingerprint "$KOSLI_FINGERPRINT"`) produced the identical
-  `attestation_name` with `artifact_fingerprint` set directly and no `target_artifacts`. Since
-  the fingerprint is already known at that point in the `backend` job, `ci-build.yml` uses the
-  plain form: prefer `--fingerprint` over the dotted address-by-template-name form whenever
-  the fingerprint is already in hand, and reserve the dotted form for attestations made before
-  the artifact itself has been reported.
+  `attestation_name` with `artifact_fingerprint` set directly and no `target_artifacts`. This
+  finding is what `release-approval` still relies on — prefer `--fingerprint` over the dotted
+  address-by-template-name form whenever the fingerprint is already in hand (as it is by
+  `release-gate`), and reserve the dotted form for attestations made before the artifact
+  itself has been reported. `peer-review-decision` no longer uses either form of
+  artifact-addressing (see the 2026-08-26 design decision above): it is trail-level now, with
+  no `--fingerprint` and no dotted name.
 - Whether the custom attestation type names collide with existing types in `kosli-public`.
   Run `kosli list attestation-types` before the first bootstrap — re-running it would version
   an existing type rather than create a new one.
@@ -219,19 +222,19 @@ as a peer review — see below for how those facts are judged and what happens t
 used to re-fetch the same PR/reviews/commits facts from the GitHub API directly into
 `peer-review.json` — duplicate work, since `kosli attest pullrequest github` (the `trail` job,
 above) had already fetched exactly that. Removed (customer's call, 2026-08-25, prompted by
-noticing the duplication): the `backend` job instead runs `kosli get attestation pull-request
---flow order-system-ci --trail "$KOSLI_TRAIL" --output json | jq '.[0]' > pull-request.json`
-and feeds that straight to `kosli evaluate input --policy kosli/policies/peer-review.rego`.
-The shape is the CLI's own — `pull_requests: [{url, merged_at, approvers: [{username}],
-commits: [{author_username}], ...}]` — confirmed by reading it back from a real attestation in
-`kosli-public` and by `--dry-run --debug` runs of `attest pullrequest github` against this
-repo's own history (see State, above); the rego picks the merged PR if there is one (falling
-back to the first) and compares `approvers` against `commits[].author_username` for the same
-two-distinct-or-one-independent rule as before. This is a **read-after-write** dependency
-within the `backend` job that the old script never had, so it inherits a new failure mode: in
-`KOSLI_DRY_RUN` mode the `trail` job's `attest pullrequest github` call never actually writes
-anything, so this `get attestation` call finds nothing for that trail and the step fails — see
-Gotchas.
+noticing the duplication): the `peer-review` job instead runs `kosli get attestation
+pull-request --flow order-system-ci --trail "$KOSLI_TRAIL" --output json | jq '.[0]' >
+pull-request.json` and feeds that straight to `kosli evaluate input --policy
+kosli/policies/peer-review.rego`. The shape is the CLI's own — `pull_requests: [{url,
+merged_at, approvers: [{username}], commits: [{author_username}], ...}]` — confirmed by
+reading it back from a real attestation in `kosli-public` and by `--dry-run --debug` runs of
+`attest pullrequest github` against this repo's own history (see State, above); the rego picks
+the merged PR if there is one (falling back to the first) and compares `approvers` against
+`commits[].author_username` for the same two-distinct-or-one-independent rule as before. This
+is a **read-after-write** dependency on the `trail` job's `pull-request` attestation that the
+old script never had, so it inherits a new failure mode: in `KOSLI_DRY_RUN` mode the `trail`
+job's `attest pullrequest github` call never actually writes anything, so this `get
+attestation` call finds nothing for that trail and the step fails — see Gotchas.
 
 **A non-compliant peer-review decision carries its `violations` as annotations, not just in
 the step log.** `kosli evaluate input`'s JSON output has a `violations` array (empty when
@@ -273,6 +276,32 @@ https://github.com/kosli-dev/control-actions, same as before. The environment po
 updated to name `peer-review-decision`/`decision` instead of
 `peer-review`/`custom:peer-review`; the now-unused
 `kosli/attestation-types/peer-review.schema.json` was deleted.
+
+**Peer review moved into its own job, and the decision attestation moved from artifact-bound
+to trail-level (customer's call, 2026-08-26).** Previously the fetch-evaluate-attest sequence
+ran inside `backend`, and `kosli attest decision` bound it to the `orders-api` fingerprint
+(`--fingerprint "$KOSLI_FINGERPRINT"`, addressed as `orders-api.peer-review-decision`). Now
+the `peer-review` job (`needs: trail` only) does the fetch, evaluate and attest, and the
+`attest decision` call carries no `--fingerprint` at all — it binds to the trail via the job
+env's `KOSLI_FLOW`/`KOSLI_TRAIL`, exactly like the trail job's own `pull-request` attestation.
+Both changes together mean `peer-review-decision` moved from `artifacts.orders-api.attestations`
+to `trail.attestations` in `kosli/flow-templates/order-system-ci.yml`, and its entry was
+dropped from `kosli/policies/secure-development.yml`'s `attestations:` list — a policy's
+`attestations:` rule only matches attestations bound to the artifact being asserted (confirmed
+against the published policy schema: there is no way to name a trail-level attestation
+requirement in an env-type policy), so a trail-level `peer-review-decision` can only be
+enforced the way `pull-request` already was — implicitly, through `trail-compliance: required:
+true`, which requires every attestation the flow template demands, trail-level or not. This is
+not a bet on undocumented behaviour: `pull-request` has worked exactly this way (trail-level,
+required only via `trail-compliance`, never named in a policy's `attestations:` list) since
+before this change, and publish-gate has always waited on it — this just applies the same
+already-proven pattern to `peer-review-decision`. Splitting the job also kills the
+`KOSLI_FINGERPRINT: ""` workaround documented in the Gotchas (the exact one that broke the
+2026-08-25 live run, see State) — the `peer-review` job never sets `KOSLI_FINGERPRINT` in the
+first place, so `kosli get attestation pull-request --trail ...` has nothing to collide with.
+`publish-gate` gained `peer-review` in its `needs:` (alongside `backend`) so it still waits for
+the decision before asserting the template; `release-gate` needed no change, since it already
+depends on `publish-gate` transitively. Not yet run live.
 
 **The gate is `kosli assert artifact`, not `kosli evaluate trail` with rego.**
 `kosli evaluate` is a beta feature that has to be enabled per org — not something to bet a
@@ -374,12 +403,14 @@ dependencies.
 compliant only once both have been packaged, scanned and found clean, so a commit cannot be
 released with one platform missing.
 
-**The build is three parallel jobs behind a `trail` job.** `backend` and the two `mobile`
-matrix legs all attest to the same trail, so the trail has to exist before any of them starts
-— that is the whole job of `trail`, and it is why the legs cannot race creating it.
+**The build is four parallel jobs behind a `trail` job.** `peer-review`, `backend` and the two
+`mobile` matrix legs all attest to the same trail, so the trail has to exist before any of
+them starts — that is the whole job of `trail`, and it is why they cannot race creating it.
 `release-gate` needs `mobile` as well as `backend`: it asserts trail compliance, which
 includes both `oversecured` attestations, so without that edge it could run while a leg is
-still going. `publish-gate` needs only `backend`, since it judges the backend's controls.
+still going. `publish-gate` needs `backend` and `peer-review` (not `mobile`): it judges only
+the backend's controls, but that now includes the trail-level `peer-review-decision`, produced
+by a job of its own rather than by `backend` — see the 2026-08-26 design decision above.
 
 **The mobile control is a canned Oversecured report** (customer's call, 2026-08-25),
 replacing the mobsfscan SARIF scan, which is gone along with `make scan`.
@@ -409,9 +440,11 @@ not possibly be there yet. So `integration-tests` and `release-approval` are nam
 `production-readiness.yml` instead. Putting them back in the template
 re-breaks the publish gate. `peer-review-decision` is the exception that proves the rule: it
 *is* in the template (customer's call, 2026-08-25), because unlike the other two it is
-produced in the `backend` job, at the same time as the evidence it judges — there is no
-publish-gate-breaking timing problem to design around, so it belongs where every other
-build-time control does.
+produced by the time `publish-gate` runs — originally because it was attested inside the
+`backend` job itself; since 2026-08-26 because the `peer-review` job it now lives in is a
+dependency of `publish-gate` in its own right (`needs: [backend, peer-review]`). Either way
+there is no publish-gate-breaking timing problem to design around, so it belongs in the
+template like every other build-time control, trail-level or not.
 
 **The publish gate asserts no policy** (customer's call, 2026-08-25). `kosli assert artifact`
 with neither `--policy` nor `--environment` judges the artifact against its flow template,
@@ -665,9 +698,12 @@ that line: it is why the mobile half needs no toolchain installed.
   picked up by `kosli get attestation` too even though that call never mentions
   `--fingerprint` - `get attestation` treats `--trail` and `--fingerprint` as mutually
   exclusive, so it failed with `only one of --trail, --fingerprint is allowed`. This broke a
-  real live run (see State, above). Fixed by clearing it for that one step:
-  `env: {KOSLI_FINGERPRINT: ""}`. Worth checking for on every new step that adds a `kosli`
-  command to a job that already exports a `KOSLI_*` variable for a different purpose.
+  real live run (see State, above). Fixed at the time by clearing it for that one step:
+  `env: {KOSLI_FINGERPRINT: ""}`. Moot since 2026-08-26: the `get attestation pull-request`
+  call now lives in its own `peer-review` job (see the design decision above), which never
+  sets `KOSLI_FINGERPRINT` in the first place, so there is nothing to clear any more - but
+  worth remembering the shape of this failure mode for the next `kosli` command added to a job
+  that already exports a `KOSLI_*` variable for a different purpose.
 - **Re-running the release gate job re-attests the same approver.** The approvals API returns the
   run's approvals, and a re-run does not create a new one, so a blocked release that is
   re-reported and re-run records the original approval again. Fine here; worth knowing before

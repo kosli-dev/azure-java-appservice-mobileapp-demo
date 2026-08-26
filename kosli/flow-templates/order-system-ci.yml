@@ -21,17 +21,18 @@ trail:
     # Raw pull-request evidence for the merge commit (who opened it, who reviewed it, when).
     - name: pull-request
       type: pull_request
+    # kosli/policies/peer-review.rego evaluated against the pull-request attestation above
+    # (fetched back with `kosli get attestation`, never a second attestation in its own
+    # right), recorded with `kosli attest decision --control peer-review`. Trail-level, not
+    # artifact-bound - the peer-review job only needs `trail`, not `backend`, so nothing
+    # ties this to the orders-api fingerprint. Still runs before publish-gate, so a bad peer
+    # review fails the trail (and so publish-gate) as soon as its job finishes, same as
+    # unit-tests or mutation-tests.
+    - name: peer-review-decision
+      type: decision
   artifacts:
     - name: orders-api
       attestations:
-        # kosli/policies/peer-review.rego evaluated against the pull-request attestation above
-        # (fetched back with `kosli get attestation`, never a second attestation in its own
-        # right), recorded with `kosli attest decision --control peer-review`. Unlike
-        # integration-tests/release-approval, this is produced in the same job as the evidence
-        # it judges, so it belongs here rather than in a policy - a bad peer review
-        # fails the trail (and so publish-gate) as soon as the build finishes.
-        - name: peer-review-decision
-          type: decision
         - name: unit-tests
           type: junit
         # SonarQube quality gate, attested straight from SonarCloud via its Kosli webhook.
