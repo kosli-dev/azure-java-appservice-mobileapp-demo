@@ -96,22 +96,20 @@ jobs:
             exit 1
           fi
 
-  # Re-checks the artifact against the policies actually attached to each Azure environment -
-  # secure-development (staging and prod) and production-readiness (prod only) - rather than
-  # against a standalone policy object. `--policy publish-gate` (the old waive-attestation.yml)
-  # targeted the orphaned `publish-gate` policy object attached to nothing, not a check
-  # anything in the pipeline actually performs - see the "waiver mechanism is back" design
-  # decision in the working notes.
+  # Re-checks the artifact against the policy actually attached to staging - secure-development
+  # - rather than against a standalone policy object. `--policy publish-gate` (the old
+  # waive-attestation.yml) targeted the orphaned `publish-gate` policy object attached to
+  # nothing, not a check anything in the pipeline actually performs - see the "waiver
+  # mechanism is back" design decision in the working notes. Staging only, not production:
+  # this mirrors what publish-gate itself checks, and a waiver's whole point is unblocking
+  # that gate - release-gate does its own real assert against production later, once the
+  # release controls exist.
   recheck:
-    name: Re-check ${{ matrix.kosli-environment }}
+    name: Re-check staging
     needs: waive
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        kosli-environment:
-          - ${{ vars.KOSLI_ENVIRONMENT_STAGING || 'azure-appservice-staging' }}
-          - ${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }}
+    env:
+      KOSLI_ENV_STAGING: ${{ vars.KOSLI_ENVIRONMENT_STAGING || 'azure-appservice-staging' }}
     steps:
       - name: Setup Kosli CLI
         uses: kosli-dev/setup-cli-action@v5
@@ -119,24 +117,23 @@ jobs:
           version: "2"
 
       # An environment with no policies attached makes the assert below pass vacuously -
-      # same guard release-gate uses, and the same reason it's needed here.
-      - name: Check the environment has policies attached
+      # same guard release-gate/publish-gate use, and the same reason it's needed here.
+      - name: Check the staging environment has policies attached
         run: |
-          attached=$(kosli get environment "${{ matrix.kosli-environment }}" --output json | jq '.policies // [] | length')
-          echo "${{ matrix.kosli-environment }} has $attached policies attached"
+          attached=$(kosli get environment "$KOSLI_ENV_STAGING" --output json | jq '.policies // [] | length')
+          echo "$KOSLI_ENV_STAGING has $attached policies attached"
           if [ "$attached" -eq 0 ]; then
-            echo "::error::No policies attached to ${{ matrix.kosli-environment }} - this"\
-                 " check would pass no matter what. Run the Bootstrap Kosli workflow with"\
-                 " 'create environment'."
+            echo "::error::No policies attached to $KOSLI_ENV_STAGING - this check would pass"\
+                 " no matter what. Run the Bootstrap Kosli workflow with 'create environment'."
             exit 1
           fi
 
       # Asserted against the *environment*, not a standalone policy: the question is "would
-      # this artifact be allowed to run here?", the same question publish-gate/release-gate
-      # ask when the pipeline itself runs.
-      - name: Assert the environment's policies
+      # this artifact be allowed to run in staging?", the same question publish-gate asks when
+      # the pipeline itself runs.
+      - name: Assert the staging environment's policies
         run: |
           kosli assert artifact \
             --fingerprint "${{ inputs.fingerprint }}" \
-            --environment "${{ matrix.kosli-environment }}" \
+            --environment "$KOSLI_ENV_STAGING" \
             --flow "$KOSLI_FLOW"
