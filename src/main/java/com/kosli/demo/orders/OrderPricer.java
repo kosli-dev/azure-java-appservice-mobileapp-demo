@@ -10,6 +10,7 @@ import java.math.RoundingMode;
  * it has several branches and boundaries, and the unit tests deliberately cover only some
  * of them, so PIT leaves mutants alive and the mutation score lands below the policy
  * threshold.
+ * 
  */
 public final class OrderPricer {
 
