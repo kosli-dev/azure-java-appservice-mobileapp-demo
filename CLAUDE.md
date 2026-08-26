@@ -29,21 +29,22 @@ trail is the commit:
 
 | Artifact | Attestations |
 | --- | --- |
-| `orders-api` | `peer-review-decision`, `unit-tests`, `sonar-quality-gate`, `mutation-tests`, `sbom` |
+| `orders-api` | `unit-tests`, `sonar-quality-gate`, `mutation-tests`, `sbom` |
 | `mobileorders-android` | `oversecured`, `sbom` |
 | `mobileorders-ios` | `oversecured`, `sbom` |
-| (trail level) | `pull-request`, `integration-tests`, `release-approval` |
+| (trail level) | `pull-request`, `peer-review-decision`, `integration-tests`, `release-approval` |
 
 `orders-api.peer-review` is gone (customer's call, 2026-08-25): it had already been reduced to
 evidence only, with no compliance-deciding jq rules, once the judgment moved to a control —
 and evidence nobody reads back from Kosli doesn't need to be attested. The facts now come from
 the trail's own `pull-request` attestation, fetched back with `kosli get attestation` and fed
-straight into `kosli evaluate input --policy kosli/policies/peer-review.rego` in the same job —
-no second GitHub API call, no custom JSON (`scripts/peer_review_attestation.py` is gone). The
-verdict is recorded as `orders-api.peer-review-decision`, a `decision`-type attestation against
-the `peer-review` control. It *is* in the flow template — it's produced in the same job as the
-evidence it judges, so nothing stops it being there, and being there means publish-gate blocks
-on a bad peer review, same as before.
+straight into `kosli evaluate input --policy kosli/policies/peer-review.rego`. The verdict is
+recorded as `peer-review-decision`, a `decision`-type attestation against the `peer-review`
+control — **trail-level, not bound to `orders-api`, and judged in its own `peer-review` job**
+(customer's call, 2026-08-26; previously it was `orders-api.peer-review-decision`, attested
+with `--fingerprint` in the `backend` job — see the design decision below for why that
+changed). It *is* in the flow template — being there means publish-gate blocks on a bad peer
+review, same as before.
 
 Template: `kosli/flow-templates/order-system-ci.yml`. The `orders-api-ci`, `mobileorders` and
 `order-system-release` flows still exist in `kosli-public` with their history; nothing writes
@@ -83,17 +84,22 @@ The next push (`8029407`, "make mutation tests fail (#33)") ran live too (2026-0
 `ci-build.yml` run 32942476644): `backend` and both `mobile` legs passed, `publish-gate`
 failed as expected on `mutation-tests` (76.5% against the `MUTATION_THRESHOLD` repo var, which
 was raised from 70 to **80** the same day, 07:22 UTC, specifically to make this push fail).
-The since-removed `waive-attestation.yml` was then dispatched by hand
-against that trail/fingerprint and also failed (run 32942853972): its "Re-check the publish
-gate" step asserted `--policy publish-gate`, which is the orphaned `publish-gate` policy
-object left attached to nothing (see the publish-gate design decision below) — not the same
-check `publish-gate` (the job) actually runs, which asserts `--flow order-system-ci` with no
-`--policy`. That stale, disconnected policy is why the step failed with `mutation-tests` is
+The original `waive-attestation.yml` (deleted the same day, see below) was then dispatched by
+hand against that trail/fingerprint and also failed (run 32942853972): its "Re-check the
+publish gate" step asserted `--policy publish-gate`, which is the orphaned `publish-gate`
+policy object left attached to nothing (see the publish-gate design decision below) — not the
+same check `publish-gate` (the job) actually runs, which asserts `--flow order-system-ci` with
+no `--policy`. That stale, disconnected policy is why the step failed with `mutation-tests` is
 non-compliant even while the printed attestation table showed it `compliant: true` (the
 waiver itself had already landed). This prompted dropping the waiver mechanism altogether
-(customer's call, 2026-08-26) — see the design decision below — in favour of
-`rerun-mutation-tests.yml`, which re-runs PIT with a lower threshold and re-attests for real,
-then re-checks the gate the correct way (`--flow`, no `--policy`). Not yet run live.
+(customer's call, 2026-08-26) in favour of `rerun-mutation-tests.yml`, which re-ran PIT with a
+lower threshold and re-attested for real, then re-checked the gate the correct way (`--flow`,
+no `--policy`). The customer then asked for the waiver back (same day) — see the "waiver
+mechanism is back" design decision below — so the file was restored under its original name,
+`.github/workflows/waive-attestation.yml`, POSTing an override instead of re-running PIT, and
+re-checking staging and production's actual attached policies (`--environment`, matrix-ed)
+rather than either the flow template or a standalone policy object. Not yet run live in this
+form.
 
 The `sbom` attestations (added 2026-08-26) took two live rounds to land. **Round one**
 (all three legs): SBOM generation itself failed - `anchore/sbom-action@v0`'s `path` input
@@ -173,11 +179,13 @@ Not verified, and the first live run is the test of it:
   orders-api.peer-review-decision`, no `--fingerprint`) split into `attestation_name:
   "peer-review-decision"` plus `target_artifacts: ["orders-api"]`; a plain dry run (`--name
   peer-review-decision --fingerprint "$KOSLI_FINGERPRINT"`) produced the identical
-  `attestation_name` with `artifact_fingerprint` set directly and no `target_artifacts`. Since
-  the fingerprint is already known at that point in the `backend` job, `ci-build.yml` uses the
-  plain form: prefer `--fingerprint` over the dotted address-by-template-name form whenever
-  the fingerprint is already in hand, and reserve the dotted form for attestations made before
-  the artifact itself has been reported.
+  `attestation_name` with `artifact_fingerprint` set directly and no `target_artifacts`. This
+  finding is what `release-approval` still relies on — prefer `--fingerprint` over the dotted
+  address-by-template-name form whenever the fingerprint is already in hand (as it is by
+  `release-gate`), and reserve the dotted form for attestations made before the artifact
+  itself has been reported. `peer-review-decision` no longer uses either form of
+  artifact-addressing (see the 2026-08-26 design decision above): it is trail-level now, with
+  no `--fingerprint` and no dotted name.
 - Whether the custom attestation type names collide with existing types in `kosli-public`.
   Run `kosli list attestation-types` before the first bootstrap — re-running it would version
   an existing type rather than create a new one.
@@ -219,19 +227,19 @@ as a peer review — see below for how those facts are judged and what happens t
 used to re-fetch the same PR/reviews/commits facts from the GitHub API directly into
 `peer-review.json` — duplicate work, since `kosli attest pullrequest github` (the `trail` job,
 above) had already fetched exactly that. Removed (customer's call, 2026-08-25, prompted by
-noticing the duplication): the `backend` job instead runs `kosli get attestation pull-request
---flow order-system-ci --trail "$KOSLI_TRAIL" --output json | jq '.[0]' > pull-request.json`
-and feeds that straight to `kosli evaluate input --policy kosli/policies/peer-review.rego`.
-The shape is the CLI's own — `pull_requests: [{url, merged_at, approvers: [{username}],
-commits: [{author_username}], ...}]` — confirmed by reading it back from a real attestation in
-`kosli-public` and by `--dry-run --debug` runs of `attest pullrequest github` against this
-repo's own history (see State, above); the rego picks the merged PR if there is one (falling
-back to the first) and compares `approvers` against `commits[].author_username` for the same
-two-distinct-or-one-independent rule as before. This is a **read-after-write** dependency
-within the `backend` job that the old script never had, so it inherits a new failure mode: in
-`KOSLI_DRY_RUN` mode the `trail` job's `attest pullrequest github` call never actually writes
-anything, so this `get attestation` call finds nothing for that trail and the step fails — see
-Gotchas.
+noticing the duplication): the `peer-review` job instead runs `kosli get attestation
+pull-request --flow order-system-ci --trail "$KOSLI_TRAIL" --output json | jq '.[0]' >
+pull-request.json` and feeds that straight to `kosli evaluate input --policy
+kosli/policies/peer-review.rego`. The shape is the CLI's own — `pull_requests: [{url,
+merged_at, approvers: [{username}], commits: [{author_username}], ...}]` — confirmed by
+reading it back from a real attestation in `kosli-public` and by `--dry-run --debug` runs of
+`attest pullrequest github` against this repo's own history (see State, above); the rego picks
+the merged PR if there is one (falling back to the first) and compares `approvers` against
+`commits[].author_username` for the same two-distinct-or-one-independent rule as before. This
+is a **read-after-write** dependency on the `trail` job's `pull-request` attestation that the
+old script never had, so it inherits a new failure mode: in `KOSLI_DRY_RUN` mode the `trail`
+job's `attest pullrequest github` call never actually writes anything, so this `get
+attestation` call finds nothing for that trail and the step fails — see Gotchas.
 
 **A non-compliant peer-review decision carries its `violations` as annotations, not just in
 the step log.** `kosli evaluate input`'s JSON output has a `violations` array (empty when
@@ -274,6 +282,34 @@ updated to name `peer-review-decision`/`decision` instead of
 `peer-review`/`custom:peer-review`; the now-unused
 `kosli/attestation-types/peer-review.schema.json` was deleted.
 
+**Peer review moved into its own job, and the decision attestation moved from artifact-bound
+to trail-level (customer's call, 2026-08-26).** Previously the fetch-evaluate-attest sequence
+ran inside `backend`, and `kosli attest decision` bound it to the `orders-api` fingerprint
+(`--fingerprint "$KOSLI_FINGERPRINT"`, addressed as `orders-api.peer-review-decision`). Now
+the `peer-review` job (`needs: trail` only) does the fetch, evaluate and attest, and the
+`attest decision` call carries no `--fingerprint` at all — it binds to the trail via the job
+env's `KOSLI_FLOW`/`KOSLI_TRAIL`, exactly like the trail job's own `pull-request` attestation.
+Both changes together mean `peer-review-decision` moved from `artifacts.orders-api.attestations`
+to `trail.attestations` in `kosli/flow-templates/order-system-ci.yml`, and its entry was
+dropped from `kosli/policies/secure-development.yml`'s `attestations:` list — a policy's
+`attestations:` rule only matches attestations bound to the artifact being asserted (confirmed
+against the published policy schema: there is no way to name a trail-level attestation
+requirement in an env-type policy), so a trail-level `peer-review-decision` can only be
+enforced the way `pull-request` already was — implicitly, through `trail-compliance: required:
+true`, which requires every attestation the flow template demands, trail-level or not. This is
+not a bet on undocumented behaviour: `pull-request` has worked exactly this way (trail-level,
+required only via `trail-compliance`, never named in a policy's `attestations:` list) since
+before this change, and publish-gate has always waited on it — this just applies the same
+already-proven pattern to `peer-review-decision`. Splitting the job also kills the
+`KOSLI_FINGERPRINT: ""` workaround documented in the Gotchas (the exact one that broke the
+2026-08-25 live run, see State) — the `peer-review` job never sets `KOSLI_FINGERPRINT` in the
+first place, so `kosli get attestation pull-request --trail ...` has nothing to collide with.
+`publish-gate` gained `peer-review` in its `needs:` (alongside `backend`) so it still waits for
+the decision before asserting; `release-gate` needed no change, since it already depends on
+`publish-gate` transitively. (`publish-gate` went on to gain `mobile` too, for an unrelated
+reason — see the "publish gate asserts the staging environment" design decision below.) Not
+yet run live.
+
 **The gate is `kosli assert artifact`, not `kosli evaluate trail` with rego.**
 `kosli evaluate` is a beta feature that has to be enabled per org — not something to bet a
 customer demo on. `--policy` takes an `env`-type policy and asserts an artifact against it
@@ -314,25 +350,60 @@ generated by the workflow.
 Kosli's own API model (`TemplateTrailDefinition.artifacts`, `additionalProperties: false`)
 says otherwise, and `kosli-dev/demo-app` does it the nested way. Validated against the model.
 
-**There is no waiver mechanism any more (customer's call, 2026-08-26).** The override endpoint
-(`POST /api/v2/attestations/{org}/{flow}/trail/{trail}/override`, with `reason` and
-`new_compliance_status` — there is no `kosli waive` command) is still real, but nothing in
-this repo calls it: `scripts/waive_attestation.sh` and `.github/workflows/waive-attestation.yml`
-are gone. The failing control here (`mutation-tests`) can always be made to pass for real —
-PIT's threshold is a CLI flag, not a build-time constant — so recording an override next to a
-result that was never re-checked added a second, weaker way to reach the same "compliant"
-state. `.github/workflows/rerun-mutation-tests.yml` replaces it: given a trail and a
-fingerprint, it checks out that exact commit, re-runs PIT with an input `mutation_threshold`,
-attests a fresh `mutation-tests` result against the same artifact fingerprint, and re-checks
-the publish gate the same way the `publish-gate` job itself does (`--flow order-system-ci`, no
-`--policy`). Kosli judges the latest attestation of a given name, so the new one is what gates
-on; the original below-threshold attestation is untouched and stays on the trail as a record
-of what the first run found — same "nothing is deleted" property a waiver had, without a
-second code path for compliance. This is not a precedent for every failing control: mutation
-testing is the one where "make it pass for real" is a single CLI flag away, which is why the
-old workflow's own comment called it out as the one control an env var can fail. A control
-whose remediation is not just re-running with different config (a bad peer review, say) would
-still need either a real fix or the override endpoint reintroduced for that case specifically.
+**The waiver mechanism is back (customer's call, 2026-08-26), restored under its original
+name, `.github/workflows/waive-attestation.yml`.** This reverses an earlier decision made the
+same day: the rerun-and-reattest approach (re-run PIT with a different threshold, attest a
+fresh result, re-check the gate) had briefly replaced waiving altogether, on the reasoning
+that mutation testing can always be made to pass for real — PIT's threshold is a CLI flag —
+so recording an override next to a result that was never re-checked was a second, weaker path
+to "compliant". That reasoning still holds for mutation testing specifically, but the waiver —
+an artifact-bound override with a human-readable reason, recorded on the trail forever, for a
+control someone has decided is acceptable to ship despite failing — is the more general
+mechanism, and the customer wants it available again. `rerun-mutation-tests.yml` was renamed
+back rather than living alongside a second, differently-named file: same content rewritten in
+place, `git mv`'d to `waive-attestation.yml`, `name:` "Waive an attestation", job `waive`
+(previously `rerun`). It POSTs straight to the override endpoint (`POST
+/api/v2/attestations/{org}/{flow}/trail/{trail}/override`, with `reason` and
+`new_compliance_status` — there is no `kosli waive` command) instead of re-running Maven/PIT.
+`scripts/waive_attestation.sh` is **not** restored — the request was to consolidate the logic
+into the workflow, and the POST is short enough (one `jq -n`, one `curl`) to live in a `run:`
+step, so there is no script to keep in sync with it. Inputs are `trail`, `fingerprint`,
+`reason` (all required) plus `artifact` (default `orders-api`), `attestation` (default
+`mutation-tests`) and `attestation_type` (default `custom:mutation-testing`) — mutation testing
+is the one control that fails via an env var in this demo, hence the defaults, but any
+artifact-bound attestation on the trail can be waived by overriding them. `mutation_threshold`
+is gone as an input, along with the checkout, `setup-java` and PIT run it existed to drive.
+
+**The old `waive-attestation.yml`'s bug is fixed, not reintroduced, by re-checking real
+environment policies instead of any standalone policy object.** Its original "Re-check the
+publish gate" step asserted `--policy publish-gate`, the orphaned policy object left attached
+to nothing (see the publish-gate design decision below) — not the check `publish-gate` (the
+job) actually runs. That mismatch broke a real dispatch (run 32942853972, see State above): the
+step failed with `mutation-tests` non-compliant even though the override had already landed
+and the printed table showed `compliant: true`. The intermediate `rerun-mutation-tests.yml`
+avoided this by asserting against the flow template directly (`--flow order-system-ci`, no
+`--policy`) — the same check `publish-gate` ran *at the time* — but that only answered "did
+the build produce everything it owed", not "would this be allowed to run in
+staging/production", which is the question a waiver dispatched after a failed release is
+actually being asked to answer. So the restored workflow's second job, `recheck`, is
+matrix-ed over both Azure environments (`vars.KOSLI_ENVIRONMENT_STAGING ||
+'azure-appservice-staging'` and `vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod'`, the same
+fallback pattern `snapshot-azure-environment.yml` uses) and asserts `kosli assert artifact
+--fingerprint ... --environment <env> --flow order-system-ci` against each — the same check
+`publish-gate` and `release-gate` run for staging and production respectively, now that
+`publish-gate` also asserts `--environment` (see the design decision below, 2026-08-26,
+written after this one). Each leg guards against the same vacuous-pass failure mode
+`release-gate` and `publish-gate` already guard against - an environment with no policies
+attached would otherwise print `COMPLIANT` no matter what - with the identical `kosli get
+environment ... | jq '.policies | length'` check before asserting. Not yet run live in this
+form - the override POST and the `--policy publish-gate` fix were
+each carried over from something that *did* run live at some point, but the matrix-ed
+environment re-check is new.
+
+This is still not a precedent for every failing control needing a waiver path: it is one
+either way — the override endpoint is generic and any artifact-bound attestation on a trail
+can be named. What is control-specific is only the *default* inputs, which point at
+mutation-tests because that is the control this demo can fail on demand.
 
 **The Sonar quality gate is attested by SonarCloud itself, via webhook — not by CI calling
 `kosli attest`.** Kosli's Sonar integration (org-level, enabled once in the Kosli app) gives a
@@ -374,12 +445,16 @@ dependencies.
 compliant only once both have been packaged, scanned and found clean, so a commit cannot be
 released with one platform missing.
 
-**The build is three parallel jobs behind a `trail` job.** `backend` and the two `mobile`
-matrix legs all attest to the same trail, so the trail has to exist before any of them starts
-— that is the whole job of `trail`, and it is why the legs cannot race creating it.
-`release-gate` needs `mobile` as well as `backend`: it asserts trail compliance, which
-includes both `oversecured` attestations, so without that edge it could run while a leg is
-still going. `publish-gate` needs only `backend`, since it judges the backend's controls.
+**The build is four parallel jobs behind a `trail` job.** `peer-review`, `backend` and the two
+`mobile` matrix legs all attest to the same trail, so the trail has to exist before any of
+them starts — that is the whole job of `trail`, and it is why they cannot race creating it.
+Both gates now need `mobile` as well as `backend`, for the same reason: each asserts
+`--environment` (staging for `publish-gate`, production for `release-gate`), and
+`secure-development.yml`'s `trail-compliance: required: true` spans the whole trail, both
+`oversecured` attestations included, so without that edge either gate could run while a mobile
+leg was still going. `publish-gate` also needs `peer-review`: `peer-review-decision` is
+trail-level, produced by a job of its own rather than by `backend` — see the 2026-08-26 design
+decision above.
 
 **The mobile control is a canned Oversecured report** (customer's call, 2026-08-25),
 replacing the mobsfscan SARIF scan, which is gone along with `make scan`.
@@ -402,26 +477,44 @@ Oversecured omits a severity from `severityCounts` when its count is zero rather
 reporting `0`.
 
 **The flow template lists only what the build produces; post-build controls live in policies**
-(customer's call, 2026-08-25). The template is also the yardstick `kosli assert artifact` uses
-at the publish gate, which runs minutes before the integration test result and the approval
-exist — with them in the template, the publish gate failed every run on controls that could
-not possibly be there yet. So `integration-tests` and `release-approval` are named in
-`production-readiness.yml` instead. Putting them back in the template
-re-breaks the publish gate. `peer-review-decision` is the exception that proves the rule: it
-*is* in the template (customer's call, 2026-08-25), because unlike the other two it is
-produced in the `backend` job, at the same time as the evidence it judges — there is no
-publish-gate-breaking timing problem to design around, so it belongs where every other
-build-time control does.
+(customer's call, 2026-08-25). Every policy's `trail-compliance: required: true` ultimately
+judges the template — directly for `publish-gate`'s and `release-gate`'s own environments, and
+this is still what makes the template the yardstick that matters, even though `publish-gate`
+now asserts `--environment azure-appservice-staging` rather than the template file directly
+(see the design decision above). `publish-gate` runs minutes before the integration test
+result and the approval exist — with them in the template, `trail-compliance` would fail
+every run on controls that could not possibly be there yet. So `integration-tests` and
+`release-approval` are named in `production-readiness.yml` instead, attached to production
+alone, never to staging. Putting them in the template, or in `secure-development.yml` (attached
+to both environments), re-breaks the publish gate. `peer-review-decision` is the exception
+that proves the rule: it *is* in the template (customer's call, 2026-08-25), because unlike
+the other two it is produced by the time `publish-gate` runs — originally because it was
+attested inside the `backend` job itself; since 2026-08-26 because the `peer-review` job it
+now lives in is a dependency of `publish-gate` in its own right (`needs: [backend,
+peer-review, mobile]`). Either way there is no publish-gate-breaking timing problem to design
+around, so it belongs in the template like every other build-time control, trail-level or not.
 
-**The publish gate asserts no policy** (customer's call, 2026-08-25). `kosli assert artifact`
-with neither `--policy` nor `--environment` judges the artifact against its flow template,
-which is the question that gate asks: did the build produce everything it owed? Policies
-belong to the release gate. `kosli/policies/publish-gate.yml` was therefore unused; it was
-kept for a while as documentation of the same control set in policy form, then **deleted**
-(customer's call, 2026-08-25) along with its `create policy` call in `bootstrap_kosli.sh` -
-a file nothing reads is a file that goes stale. The `publish-gate` policy object still exists
-in `kosli-public`, attached to nothing; there is no `kosli delete policy`, so removing it
-needs the UI or the API.
+**The publish gate asserts the staging environment (customer's call, 2026-08-26), reversing an
+earlier decision to assert no policy at all (customer's call, 2026-08-25).** The original
+reasoning still explains why `kosli/policies/publish-gate.yml` is gone: `kosli assert artifact
+--environment` judges the artifact against every policy attached to that environment, and
+staging carries only `secure-development.yml`, so a standalone policy asserting almost the
+same control set would only drift out of sync with it, the same reasoning that got
+`release-gate.yml` deleted in favour of `--environment azure-appservice-prod`. What changed is
+*which* assert mode: `--flow "$KOSLI_FLOW"` alone (neither `--policy` nor `--environment`)
+judges the artifact against its flow template directly - did the build produce everything it
+owed - which is artifact-scoped: it does not pull in other artifacts' own required
+attestations (see the peer-review-decision trail-level design decision above for why this
+matters). `--environment azure-appservice-staging --flow "$KOSLI_FLOW"` asks a different
+question - would this artifact be allowed to run in staging - and answering it pulls in every
+policy attached there, currently just `secure-development.yml`, whose `trail-compliance:
+required: true` spans the *whole trail*, mobile legs included. That is why `publish-gate`
+gained `mobile` in its `needs:` alongside `backend` and `peer-review` - without that edge it
+could assert while a mobile leg was still going, the same race `release-gate` already guards
+against by needing `mobile` itself. The job also gained the same
+"environment has policies attached" guard `release-gate` uses, for the same vacuous-pass
+reason (see below). The `publish-gate` policy object still exists in `kosli-public`, attached
+to nothing; there is no `kosli delete policy`, so removing it needs the UI or the API.
 
 **The release gate asserts the production environment, not a policy of its own**
 (customer's call, 2026-08-25). `kosli assert artifact --environment azure-appservice-prod`
@@ -454,10 +547,16 @@ reaches App Service is the one Kosli judged. Nothing else in the repo deploys.
 **Staging sits between the two gates** (customer's call, 2026-08-25). `deploy-staging` needs
 `[backend, publish-gate]`, and `release-gate` gained `needs: deploy-staging`, so the order is
 publish-gate → staging → approval → release-gate → production. Staging is gated by
-publish-gate alone: no `--policy`, no second assert. That is deliberate — publish-gate already
-asks "did the build produce everything it owed?", which is exactly the bar for reaching the
-place where the integration tests are supposed to run, and a policy that could block staging
-would block the very testing whose result the release gate then requires.
+publish-gate alone: no second assert after it. Publish-gate itself now asserts the staging
+environment directly (see the design decision above) rather than the flow template, but the
+question it asks is still the pre-release one — would this be allowed onto staging — not
+anything requiring the integration test run or the approval: those live only in
+`production-readiness.yml`, attached to production alone, so staging's one attached policy
+(`secure-development.yml`) still cannot block on a control that does not exist yet. A policy
+that could block staging on the release controls would block the very testing whose result
+the release gate then requires — that constraint is why `production-readiness.yml` is
+deliberately not attached to staging, not a reason to keep publish-gate off `--environment`
+altogether.
 
 **The environment policies are split along the same line as the gates** (customer's call,
 2026-08-25). `kosli/policies/secure-development.yml` — provenance, trail-compliance and the
@@ -665,9 +764,12 @@ that line: it is why the mobile half needs no toolchain installed.
   picked up by `kosli get attestation` too even though that call never mentions
   `--fingerprint` - `get attestation` treats `--trail` and `--fingerprint` as mutually
   exclusive, so it failed with `only one of --trail, --fingerprint is allowed`. This broke a
-  real live run (see State, above). Fixed by clearing it for that one step:
-  `env: {KOSLI_FINGERPRINT: ""}`. Worth checking for on every new step that adds a `kosli`
-  command to a job that already exports a `KOSLI_*` variable for a different purpose.
+  real live run (see State, above). Fixed at the time by clearing it for that one step:
+  `env: {KOSLI_FINGERPRINT: ""}`. Moot since 2026-08-26: the `get attestation pull-request`
+  call now lives in its own `peer-review` job (see the design decision above), which never
+  sets `KOSLI_FINGERPRINT` in the first place, so there is nothing to clear any more - but
+  worth remembering the shape of this failure mode for the next `kosli` command added to a job
+  that already exports a `KOSLI_*` variable for a different purpose.
 - **Re-running the release gate job re-attests the same approver.** The approvals API returns the
   run's approvals, and a re-run does not create a new one, so a blocked release that is
   re-reported and re-run records the original approval again. Fine here; worth knowing before

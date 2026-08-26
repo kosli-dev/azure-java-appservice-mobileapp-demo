@@ -20,10 +20,12 @@ artifacts:
     required: true
   trail-compliance:
     required: true
+  # peer-review-decision is trail-level (see the flow template), not artifact-bound, so it
+  # cannot be named here - `attestations:` only matches attestations on the artifact being
+  # asserted. It is still required: trail-compliance: required: true already covers every
+  # attestation the template demands, trail-level or not, the same way it already covers the
+  # trail's `pull-request` attestation without that being listed here either.
   attestations:
-    - name: peer-review-decision
-      type: decision
-      for_control: peer-review
     - name: unit-tests
       type: junit
     - name: sonar-quality-gate

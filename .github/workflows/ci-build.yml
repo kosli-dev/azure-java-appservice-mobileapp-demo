@@ -4,8 +4,9 @@ name: CI build
 # controlled and released together from one commit on main.
 #
 #   trail                      create the flow and the trail for this commit
-#   backend                    build, test and attest the Java service     \ in parallel
-#   mobile                     package, scan and attest each mobile app    /
+#   peer-review                judge the peer review from the trail's pull-request evidence \
+#   backend                    build, test and attest the Java service                       | in parallel
+#   mobile                     package, scan and attest each mobile app                      /
 #   publish-gate               may this component be released to staging?
 #   deploy-staging             put it on the staging App Service
 #   snapshot-after-staging     report what is now running in both environments
@@ -85,22 +86,77 @@ jobs:
             --name pull-request \
             --github-token "${{ secrets.GITHUB_TOKEN }}"
 
-      - name: What happens next
+      - name: Trail summary
         run: |
           {
-            echo "### Next"
+            echo "### Kosli Trail"
             echo ""
             echo "| | |"
             echo "|---|---|"
             echo "| Trail | [\`$KOSLI_TRAIL\`](https://app.kosli.com/$KOSLI_ORG/flows/$KOSLI_FLOW/trails/$KOSLI_TRAIL) |"
             echo ""
-            echo "The trail is not compliant yet: nothing has reported an integration test run."
-            echo ""
-            echo "1. deploy-staging auto-triggers **Report integration test result** with commit"
-            echo "   \`$KOSLI_TRAIL\`, reporting the INTEGRATION_TEST_DEFAULT_RESULT variable's"
-            echo "   result. Run that workflow by hand to force \`pass\` or \`fail\` instead."
-            echo "2. Approve **release-gate** below. Kosli decides from there."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # -------------------------------------------------------------------- 1. Peer review
+  # Independent of backend/mobile: it only needs the trail's `pull-request` attestation
+  # (trail job), not the built artifact, and it judges the trail rather than any one artifact
+  # - see the flow template and kosli/policies/secure-development.yml.
+  peer-review:
+    name: Judge the peer review
+    runs-on: ubuntu-latest
+    needs: trail
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Kosli CLI
+        uses: kosli-dev/setup-cli-action@v5
+        with:
+          version: "2"
+
+      # The `pull-request` attestation (trail job) already gathered everything a peer review
+      # needs to judge - who approved, who wrote the code - so there is no separate GitHub API
+      # call here: just read that attestation back.
+      - name: Fetch the pull request attestation
+        run: |
+          kosli get attestation pull-request \
+            --flow "$KOSLI_FLOW" \
+            --trail "$KOSLI_TRAIL" \
+            --output json | jq '.[0]' > pull-request.json
+
+      # The facts never reach Kosli as a second attestation - kosli/policies/peer-review.rego
+      # judges pull-request.json directly, and the verdict is recorded as a decision against
+      # the `peer-review` control. peer-review-decision is a trail-level attestation in the
+      # flow template (order-system-ci.yml), so a bad peer review fails trail-compliance - and
+      # so publish-gate - as soon as this job finishes, same as unit-tests or mutation-tests.
+      - name: Evaluate and record the peer review control decision
+        run: |
+          VERDICT="$(kosli evaluate input \
+            --input-file pull-request.json \
+            --policy kosli/policies/peer-review.rego \
+            --no-assert \
+            --output json)"
+          COMPLIANT="$(echo "$VERDICT" | jq -r '.allow')"
+          echo "$VERDICT" | jq -r '.violations[]? | "peer review: " + .'
+
+          # One --annotate per violation, keyed violation_1, violation_2, ... - --annotate
+          # keys only allow [A-Za-z0-9_], so a numbered key is as descriptive as it gets.
+          ANNOTATE_ARGS=()
+          i=0
+          while IFS= read -r violation; do
+            i=$((i + 1))
+            ANNOTATE_ARGS+=(--annotate "violation_$i=$violation")
+          done < <(echo "$VERDICT" | jq -r '.violations[]?')
+
+          # No --fingerprint: this attests to the trail itself (KOSLI_FLOW/KOSLI_TRAIL, from
+          # the job env), not to any one artifact - same as the trail job's own
+          # `pull-request` attestation.
+          kosli attest decision \
+            --name peer-review-decision \
+            --control peer-review \
+            --compliant="$COMPLIANT" \
+            --attachments pull-request.json \
+            --attachments kosli/policies/peer-review.rego \
+            "${ANNOTATE_ARGS[@]}"
 
   backend:
     name: Build and attest the backend
@@ -151,7 +207,7 @@ jobs:
             --artifact-type dir \
             --name "$ARTIFACT_NAME"
           {
-            echo "### Kosli"
+            echo "### Kosli Artifact"
             echo ""
             echo "| | |"
             echo "|---|---|"
@@ -178,59 +234,6 @@ jobs:
             --type cyclonedx-sbom \
             --attestation-data sbom-orders-api.cdx.json \
             --attachments sbom-orders-api.cdx.json
-
-      # -------------------------------------------------------------------- 1. Peer review
-      # The `pull-request` attestation (trail job) already gathered everything a peer review
-      # needs to judge - who approved, who wrote the code - so there is no separate GitHub API
-      # call here: just read that attestation back.
-      - name: Fetch the pull request attestation
-        # KOSLI_FINGERPRINT (set above, for the artifact) and --trail are mutually exclusive
-        # on `get attestation` - the CLI binds --fingerprint from that env var even though
-        # this call never passes the flag itself, so it has to be cleared for this step.
-        env:
-          KOSLI_FINGERPRINT: ""
-        run: |
-          kosli get attestation pull-request \
-            --flow "$KOSLI_FLOW" \
-            --trail "$KOSLI_TRAIL" \
-            --output json | jq '.[0]' > pull-request.json
-
-      # The facts never reach Kosli as a second attestation - kosli/policies/peer-review.rego
-      # judges pull-request.json directly, and the verdict is recorded as a decision against
-      # the `peer-review` control. peer-review-decision is in the flow template
-      # (order-system-ci.yml), so a bad peer review fails trail-compliance - and so
-      # publish-gate - as soon as this job finishes, same as unit-tests or mutation-tests.
-      - name: Evaluate and record the peer review control decision
-        run: |
-          VERDICT="$(kosli evaluate input \
-            --input-file pull-request.json \
-            --policy kosli/policies/peer-review.rego \
-            --no-assert \
-            --output json)"
-          COMPLIANT="$(echo "$VERDICT" | jq -r '.allow')"
-          echo "$VERDICT" | jq -r '.violations[]? | "peer review: " + .'
-
-          # One --annotate per violation, keyed violation_1, violation_2, ... - --annotate
-          # keys only allow [A-Za-z0-9_], so a numbered key is as descriptive as it gets.
-          ANNOTATE_ARGS=()
-          i=0
-          while IFS= read -r violation; do
-            i=$((i + 1))
-            ANNOTATE_ARGS+=(--annotate "violation_$i=$violation")
-          done < <(echo "$VERDICT" | jq -r '.violations[]?')
-
-          # Plain name + explicit --fingerprint, not the dotted artifact.attestation form: the
-          # fingerprint is already known (KOSLI_FINGERPRINT, set when the artifact was
-          # attested above), so there is nothing for name-based template addressing to resolve
-          # that the fingerprint doesn't already say more directly.
-          kosli attest decision \
-            --name peer-review-decision \
-            --fingerprint "$KOSLI_FINGERPRINT" \
-            --control peer-review \
-            --compliant="$COMPLIANT" \
-            --attachments pull-request.json \
-            --attachments kosli/policies/peer-review.rego \
-            "${ANNOTATE_ARGS[@]}"
 
       - name: Attest the unit tests
         run: |
@@ -352,7 +355,9 @@ jobs:
   publish-gate:
     name: Can release to staging?
     runs-on: ubuntu-latest
-    needs: backend
+    needs: [backend, peer-review, mobile]
+    env:
+      KOSLI_ENV_STAGING: ${{ vars.KOSLI_ENVIRONMENT_STAGING || 'azure-appservice-staging' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -361,13 +366,29 @@ jobs:
         with:
           version: "2"
 
-      # No --policy: with neither --policy nor --environment, the artifact is asserted
-      # against its flow template, which is everything the build owed. Policies are the
-      # release gate's business.
-      - name: Assert the flow template
+      # An environment with no policies attached makes the assert below pass vacuously -
+      # same guard release-gate uses, and the same reason it's needed here.
+      - name: Check the staging environment has policies attached
+        run: |
+          attached=$(kosli get environment "$KOSLI_ENV_STAGING" --output json | jq '.policies // [] | length')
+          echo "$KOSLI_ENV_STAGING has $attached policies attached"
+          if [ "$attached" -eq 0 ]; then
+            echo "::error::No policies attached to $KOSLI_ENV_STAGING - the publish gate would"\
+                 " pass no matter what. Run the Bootstrap Kosli workflow with 'create environment'."
+            exit 1
+          fi
+
+      # Asserted against the *environment*, not the flow template directly: with
+      # --environment, Kosli judges the artifact by every policy attached to staging -
+      # currently just secure-development.yml (provenance, trail-compliance, and the
+      # build-time controls). trail-compliance spans the whole trail, not just this
+      # artifact, which is why this job now needs `mobile` too - without that edge it could
+      # run while a leg is still going, same reasoning as release-gate needing `mobile`.
+      - name: Assert against staging environment
         run: |
           kosli assert artifact \
             --fingerprint "${{ needs.backend.outputs.orders-api-fingerprint }}" \
+            --environment "$KOSLI_ENV_STAGING" \
             --flow "$KOSLI_FLOW"
 
       - name: Explain how to unblock
@@ -378,18 +399,9 @@ jobs:
           The publish gate blocked this component.
 
           Trail:    https://app.kosli.com/${KOSLI_ORG}/flows/${KOSLI_FLOW}/trails/${KOSLI_TRAIL}
-          Template: kosli/flow-templates/order-system-ci.yml
+          Policies: whatever is attached to https://app.kosli.com/${KOSLI_ORG}/environments/${KOSLI_ENV_STAGING}/snapshots/?active_tab=policies
 
-          Fix the failing control. If it's the mutation score, you can re-run PIT with a
-          different threshold instead of pushing a new commit, from the Actions tab with the
-          "Rerun mutation tests" workflow:
-
-            trail:               ${KOSLI_TRAIL}
-            fingerprint:         ${{ needs.backend.outputs.orders-api-fingerprint }}
-            mutation_threshold:  a value the current score clears
-
-          ...then re-run this job. The Sonar attestation arrives by webhook, so it can also
-          simply not have landed yet.
+          Fix the failing control.
           ==========================================================================
           EOF
           )
@@ -434,7 +446,6 @@ jobs:
             echo "| Backend fingerprint | \`${{ needs.backend.outputs.orders-api-fingerprint }}\` |"
             echo "| URL | ${{ steps.deploy.outputs.webapp-url }} |"
             echo ""
-            echo "Integration tests run against this before the production gate is approved."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ------------------------------------------------------- 7. Report the environments, again
@@ -548,21 +559,9 @@ jobs:
           The release gate blocked ${KOSLI_TRAIL}.
 
           Trail:    https://app.kosli.com/${KOSLI_ORG}/flows/${KOSLI_FLOW}/trails/${KOSLI_TRAIL}
-          Policies: whatever is attached to ${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }} -
-                    kosli/policies/secure-development.yml and
-                    kosli/policies/production-readiness.yml
-
-          The usual cause in this demo is the integration test run: either it was never
-          reported to this trail, or it was reported as a failing run. The approval itself
-          was recorded a step earlier, as ${{ steps.approver.outputs.approver }}.
-
-          Run the "Report integration test result" workflow with:
-
-            commit: ${KOSLI_TRAIL}
-            result: pass
-
-          ...then re-run this job. Reporting again adds another attestation to the trail;
-          Kosli judges the latest one.
+          Policies: whatever is attached to https://app.kosli.com/${KOSLI_ORG}/environments/${{ vars.KOSLI_ENVIRONMENT || 'azure-appservice-prod' }}/snapshots/?active_tab=policies
+                    
+          Fix the failing control(s).
           ==========================================================================
           EOF
           )
@@ -603,7 +602,6 @@ jobs:
             echo "| Backend fingerprint | \`${{ needs.backend.outputs.orders-api-fingerprint }}\` |"
             echo "| URL | ${{ steps.deploy.outputs.webapp-url }} |"
             echo ""
-            echo "The next Azure environment snapshot should show this fingerprint running."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ----------------------------------------------------- 11. Report the environments, again
