@@ -159,13 +159,16 @@ jobs:
             echo "| Fingerprint | \`$ORDERS_API_FINGERPRINT\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # anchore/sbom-action's `path` input always scans as `dir:`, which only tries
+      # directory-shaped sources and fails on a single file ("not a directory") - so this
+      # installs syft and calls it directly on the jar, which auto-detects it as a file
+      # and finds the java-archive packages inside (including Spring Boot's nested BOOT-INF
+      # dependencies).
+      - name: Setup syft
+        uses: anchore/sbom-action/download-syft@v0
+
       - name: Generate the backend SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          path: deploy/app.jar
-          format: cyclonedx-json
-          output-file: sbom-orders-api.cdx.json
-          upload-artifact: false
+        run: syft deploy/app.jar -o cyclonedx-json=sbom-orders-api.cdx.json
 
       - name: Attest the backend SBOM
         run: |
@@ -291,6 +294,9 @@ jobs:
         with:
           version: "2"
 
+      - name: Setup syft
+        uses: anchore/sbom-action/download-syft@v0
+
       - name: Build
         run: make package PLATFORM=${{ matrix.platform }}
 
@@ -320,12 +326,7 @@ jobs:
             --attachments oversecured/report-pass.json
 
       - name: Generate the SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          path: ${{ env.ARTIFACT }}
-          format: cyclonedx-json
-          output-file: sbom-mobileorders-${{ matrix.platform }}.cdx.json
-          upload-artifact: false
+        run: syft "$ARTIFACT" -o cyclonedx-json=sbom-mobileorders-${{ matrix.platform }}.cdx.json
 
       - name: Attest the SBOM
         run: |
