@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
 # One-time (idempotent) setup of the org-level Kosli objects this demo needs:
-#   * five custom attestation types - four carrying the jq rules that DECIDE compliance
+#   * four custom attestation types - three carrying the jq rules that DECIDE compliance
 #     directly, and cyclonedx-sbom, which carries none and is evidence only
-#   * the peer-review control, judged by a Rego policy against local evidence rather than a type
+#   * the peer-review and integration-tests controls, each judged by a Rego policy against
+#     local evidence rather than by a type's jq rules
 #
 # The environment policies (secure-development, production-readiness) are created and attached
 # by the Bootstrap Kosli workflow instead, since they belong with the environments they judge.
@@ -37,6 +38,22 @@ if kosli get control peer-review >/dev/null 2>&1; then
 else
   kosli create control peer-review \
     --name "Peer review" \
+    --description "$CONTROL_DESCRIPTION"
+fi
+
+echo "==> integration-tests control"
+# The judgment that used to live in the integration-test type's jq rules: the run must have
+# executed and reported no failures and no errors. Evaluated by
+# kosli/policies/integration-tests.rego and recorded with `kosli attest decision --control
+# integration-tests` in report-integration-test-result.yml.
+CONTROL_DESCRIPTION="An integration test run across the components of a release executed and reported no failures and no errors."
+if kosli get control integration-tests >/dev/null 2>&1; then
+  kosli update control integration-tests \
+    --name "Integration tests" \
+    --description "$CONTROL_DESCRIPTION"
+else
+  kosli create control integration-tests \
+    --name "Integration tests" \
     --description "$CONTROL_DESCRIPTION"
 fi
 
@@ -78,21 +95,6 @@ kosli create attestation-type oversecured \
   --summary "Medium=.header.severityCounts.medium" \
   --summary "Low=.header.severityCounts.low" \
   --summary "Scan=.header.scan.id"
-
-echo "==> integration-test attestation type"
-# `errors` counts harness failures - a run that fell over is not a pass either.
-kosli create attestation-type integration-test \
-  --description "Integration test run across the components of a release: the run must have executed and reported no failures and no errors." \
-  --schema kosli/attestation-types/integration-test.schema.json \
-  --jq '.total > 0' \
-  --jq '.failed == 0' \
-  --jq '.errors == 0' \
-  --summary "Suite=.suite" \
-  --summary "Release=.release" \
-  --summary "Total=.total" \
-  --summary "Passed=.passed" \
-  --summary "Failed=.failed" \
-  --summary "Errors=.errors"
 
 echo "==> approval-github-workflow attestation type"
 # One entry from a run's approvals API, as .github/actions/get-github-workflow-approver

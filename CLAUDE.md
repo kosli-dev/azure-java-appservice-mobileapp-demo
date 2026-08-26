@@ -29,10 +29,10 @@ trail is the commit:
 
 | Artifact | Attestations |
 | --- | --- |
-| `orders-api` | `unit-tests`, `sonar-quality-gate`, `mutation-tests`, `sbom` |
+| `orders-api` | `unit-tests`, `sonar-quality-gate`, `mutation-tests`, `sbom`, `release-approval` |
 | `mobileorders-android` | `oversecured`, `sbom` |
 | `mobileorders-ios` | `oversecured`, `sbom` |
-| (trail level) | `pull-request`, `peer-review-decision`, `integration-tests`, `release-approval` |
+| (trail level) | `pull-request`, `peer-review-decision`, `integration-tests-decision` |
 
 `orders-api.peer-review` is gone (customer's call, 2026-08-25): it had already been reduced to
 evidence only, with no compliance-deciding jq rules, once the judgment moved to a control —
@@ -162,11 +162,13 @@ Not verified, and the first live run is the test of it:
   hit org-gated endpoints (`create control` got "Access denied" even before that, which is
   consistent with an invalid token rather than the same enablement check — but `list controls`
   needs no write auth and named the real reason). Kosli has to turn the beta on for
-  `kosli-public` before `bootstrap_kosli.sh`'s `peer-review` control and `ci-build.yml`'s
-  "Evaluate and record the peer review control decision" step will do anything but fail. This
-  does *not* affect `kosli evaluate input`, which is local-only (no API call, no org, no
-  beta gate) — only `evaluate trail`/`evaluate trails` hit the org, which is why peer review
-  is evaluated from the JSON file directly rather than by re-fetching the trail.
+  `kosli-public` before `bootstrap_kosli.sh`'s `peer-review` and `integration-tests` controls
+  and either of `ci-build.yml`'s "Evaluate and record the peer review control decision" step or
+  `report-integration-test-result.yml`'s "Evaluate and record the integration-tests control
+  decision" step will do anything but fail. This does *not* affect `kosli evaluate input`,
+  which is local-only (no API call, no org, no beta gate) — only `evaluate trail`/`evaluate
+  trails` hit the org, which is why both controls are evaluated from a local JSON file directly
+  rather than by re-fetching the trail.
 - Whether the `artifacts.attestations[].name` entries in a policy match on the short template
   name (`peer-review`) rather than the dotted CLI form (`orders-api.peer-review`). Evidence
   says short — `kosli attest junit --help` documents
@@ -290,16 +292,17 @@ the `peer-review` job (`needs: trail` only) does the fetch, evaluate and attest,
 env's `KOSLI_FLOW`/`KOSLI_TRAIL`, exactly like the trail job's own `pull-request` attestation.
 Both changes together mean `peer-review-decision` moved from `artifacts.orders-api.attestations`
 to `trail.attestations` in `kosli/flow-templates/order-system-ci.yml`, and its entry was
-dropped from `kosli/policies/secure-development.yml`'s `attestations:` list — a policy's
-`attestations:` rule only matches attestations bound to the artifact being asserted (confirmed
-against the published policy schema: there is no way to name a trail-level attestation
-requirement in an env-type policy), so a trail-level `peer-review-decision` can only be
-enforced the way `pull-request` already was — implicitly, through `trail-compliance: required:
-true`, which requires every attestation the flow template demands, trail-level or not. This is
-not a bet on undocumented behaviour: `pull-request` has worked exactly this way (trail-level,
-required only via `trail-compliance`, never named in a policy's `attestations:` list) since
-before this change, and publish-gate has always waited on it — this just applies the same
-already-proven pattern to `peer-review-decision`. Splitting the job also kills the
+dropped from `kosli/policies/secure-development.yml`'s `attestations:` list at the time — a
+policy's `attestations:` rule was believed to only match attestations bound to the artifact
+being asserted, with no way to name a trail-level requirement in an env-type policy. That belief
+turned out wrong (see the `for_control` design decision below, found later the same day) — this
+paragraph is kept for the history of the job split, not as current guidance on what can be
+named. Until that correction, a trail-level `peer-review-decision` could only be enforced the
+way `pull-request` already was — implicitly, through `trail-compliance: required: true`, which
+requires every attestation the flow template demands, trail-level or not. That fallback is not a
+bet on undocumented behaviour either: `pull-request` has worked exactly this way (trail-level,
+required only via `trail-compliance`) since before this change, and publish-gate has always
+waited on it. Splitting the job also kills the
 `KOSLI_FINGERPRINT: ""` workaround documented in the Gotchas (the exact one that broke the
 2026-08-25 live run, see State) — the `peer-review` job never sets `KOSLI_FINGERPRINT` in the
 first place, so `kosli get attestation pull-request --trail ...` has nothing to collide with.
@@ -308,6 +311,57 @@ the decision before asserting; `release-gate` needed no change, since it already
 `publish-gate` transitively. (`publish-gate` went on to gain `mobile` too, for an unrelated
 reason — see the "publish gate asserts the staging environment" design decision below.) Not
 yet run live.
+
+**`secure-development.yml` names `peer-review-decision` and `sbom` explicitly, using the
+`for_control` field for the former (customer's call, 2026-08-26, later the same day as the
+paragraph above).** The published policy schema
+(`https://docs.kosli.com/schemas/policy/v1.json`, re-fetched this session) carries a
+`for_control` property on `RequiredAttestationRule`, valid only when `type: decision`: "Control
+identifier this decision attestation must satisfy." `name` defaults to `*` (any), so
+`{type: decision, for_control: peer-review}` requires the `peer-review` control's decision
+without naming an artifact. This directly contradicts the "no way to name a trail-level
+attestation requirement" claim two paragraphs up — that claim was evidently wrong (or the
+schema gained the field since). It was initially only checked for YAML shape against the schema
+(with `jsonschema`), not runtime behaviour, and the
+[Environment Policy reference](https://docs.kosli.com/policy-reference/environment_policy)
+doesn't mention `for_control` at all — but **the customer has since confirmed live that a
+trail-level `decision` attestation (no `--fingerprint`) satisfies a `for_control` rule when
+asserting a specific artifact fingerprint against the policy**, so this is no longer a bet on
+undocumented behaviour, just on a field the prose docs haven't caught up to yet. `sbom` was
+added the ordinary way (`{name: sbom, type: custom:cyclonedx-sbom}`) and never had this doubt —
+it is artifact-bound, same as the other three entries in this list, and was already implicitly
+required via `trail-compliance` regardless. Only added to `secure-development.yml`, not
+`production-readiness.yml`: both controls are build-time and that policy is deliberately scoped
+to the two release controls that arrive after the build (see the policy-split design decision
+below) — attached to both staging and production, so this one edit covers "staging and
+production" without needing a second. Not yet applied live (bootstrapped and attached).
+
+**`integration-tests` became a control too, the same shape as `peer-review` (customer's call,
+2026-08-26).** It used to be a `custom:integration-test` attestation type whose own jq rules
+(`.total > 0`, `.failed == 0`, `.errors == 0`) decided compliance directly, attested with
+`--fingerprint` against `orders-api` — the last remaining control still following the
+"jq rules on the type decide" pattern peer-review had already moved off of. Now
+`kosli/policies/integration-tests.rego` (same three conditions, `opa check`/`opa fmt --diff`
+clean, and evaluated against both canned reports plus a synthetic zero-total case: pass gives
+`allow: true` with no violations, fail gives the two `failed`/`errored` violations, zero-total
+gives "no test cases were run") judges `integration-test.json` directly via `kosli evaluate
+input`, and the verdict is recorded with `kosli attest decision --control integration-tests`,
+trail-level (no `--fingerprint`) — `report-integration-test-result.yml`'s "Evaluate and record
+the integration-tests control decision" step, mirroring the `peer-review` job exactly down to
+the numbered `--annotate violation_N` loop. The `fingerprint` input added to that workflow
+earlier the same day (see two paragraphs up) is gone again — no longer needed now nothing binds
+to an artifact — leaving only `trail`; `ci-build.yml`'s trigger step lost `-f fingerprint=...`
+and the `backend` dependency it needed only for that fingerprint output.
+`kosli/attestation-types/integration-test.schema.json` and its `bootstrap_kosli.sh` block are
+deleted, same as `peer-review.schema.json` before it, and a `integration-tests` control block
+was added to `bootstrap_kosli.sh` alongside `peer-review`'s. `production-readiness.yml`'s
+`integration-tests` entry changed from `{name: integration-tests, type: custom:integration-test}`
+to `{type: decision, for_control: integration-tests}` — the decision attestation itself is
+named `integration-tests-decision` (matching `peer-review-decision`'s naming, distinct from the
+control identifier `integration-tests`), and `for_control` doesn't require a `name` to match it.
+Not yet in the flow template, same reasoning as before this change: it is still produced after
+`publish-gate` runs, so it stays out of `kosli/flow-templates/order-system-ci.yml` and lives
+only in `production-readiness.yml`, attached to production alone. Not yet applied live.
 
 **The gate is `kosli assert artifact`, not `kosli evaluate trail` with rego.**
 `kosli evaluate` is a beta feature that has to be enabled per org — not something to bet a
@@ -677,23 +731,19 @@ the job then runs `kosli assert artifact --environment`. That ordering is the wh
 point of point 3 — a human can start the gate, a human cannot talk it into passing. Putting
 the assert in the build job instead would make the approval the decision.
 
-**`integration-tests` and `release-approval` are attested against the `orders-api`
-fingerprint, not the trail.** Conceptually they are about the release rather than one binary,
-and they were trail-level until the controls moved into the policies. A policy's
-`attestations:` rules match attestations on the artifact being asserted, and the docs do not
-say whether a trail-level attestation counts — betting on it would fail both gates for a
-reason that reads like a missing test. Attesting `integration-tests` to the mobile artifacts
-too was tried and reverted the same day (customer's call, 2026-08-26): `release-gate` and
-`publish-gate` only ever assert the `orders-api` fingerprint, so a mobile attestation would
-never be read back by any policy — pure evidence with no gate to matter to, not worth the
-extra attest calls. The release-gate job has the fingerprint from
-`needs.backend.outputs.orders-api-fingerprint`. `report-integration-test-result.yml` no longer
-looks the fingerprint up itself with `kosli get artifact` — the caller already has it, so
-`ci-build.yml`'s auto-trigger step (which now needs `backend`, not just
-`snapshot-after-staging`) passes it straight through as a required `fingerprint` input,
-alongside `trail` (renamed from `commit` — it is the trail name, not a commit lookup key, and
-the rename makes that explicit now that the workflow no longer re-derives anything from it
-beyond `KOSLI_TRAIL`). Not yet run live in this form.
+**`release-approval` is attested against the `orders-api` fingerprint, not the trail.**
+Conceptually it is about the release rather than one binary, and it was trail-level until the
+controls moved into the policies. A policy's `attestations:` rules match attestations on the
+artifact being asserted, and (at the time) the docs did not say whether a trail-level
+attestation counts — betting on it would have failed the gate for a reason that reads like a
+missing test. `integration-tests` used to follow the identical pattern (and its
+`report-integration-test-result.yml` workflow briefly grew a `fingerprint` input for exactly
+this reason, and even briefer, an attempt at attesting it to all three artifacts), but it later
+became a control instead, judged trail-level like `peer-review-decision` — see that design
+decision above for the full history and why `release-approval` did not follow it: `release-gate`
+still only ever asserts the `orders-api` fingerprint, so there is no reason to move
+`release-approval` off it too. The release-gate job has the fingerprint from
+`needs.backend.outputs.orders-api-fingerprint`.
 
 **`deploy/build-time.txt` exists to make each build its own artifact.** The JAR is
 byte-reproducible - `project.build.outputTimestamp` is pinned in the POM, and Spring Boot's
@@ -829,9 +879,10 @@ that line: it is why the mobile half needs no toolchain installed.
 Secret `KOSLI_PUBLIC_API_TOKEN` (the workflows map it onto `KOSLI_API_TOKEN` in the job env,
 since that's the only env var name the Kosli CLI itself recognizes for `--api-token`); then
 run the **Bootstrap Kosli** workflow (re-run it after any change under `kosli/`: it creates
-the five custom types, the `peer-review` control, and both policies). **Controls is a beta
-feature that Kosli has to enable for `kosli-public`** before `create control` or the
-`peer-review` control decision step in `ci-build.yml` will do anything but fail — confirmed
+the four custom types, the `peer-review` and `integration-tests` controls, and both policies).
+**Controls is a beta feature that Kosli has to enable for `kosli-public`** before `create
+control` or either control's decision step (`ci-build.yml`'s peer review job,
+`report-integration-test-result.yml`'s attest step) will do anything but fail — confirmed
 disabled as of 2026-08-25 (`kosli list controls --org kosli-public` → "Controls is not
 enabled for this organization"). Enable the Sonar integration in the
 Kosli app (org-level) and put its webhook URL/secret on the SonarCloud project; secret
