@@ -332,12 +332,13 @@ jobs:
           Trail:    https://app.kosli.com/${KOSLI_ORG}/flows/${KOSLI_FLOW}/trails/${KOSLI_TRAIL}
           Template: kosli/flow-templates/order-system-ci.yml
 
-          Either fix the failing control, or waive it with a recorded reason:
+          Fix the failing control. If it's the mutation score, you can re-run PIT with a
+          different threshold instead of pushing a new commit, from the Actions tab with the
+          "Rerun mutation tests" workflow:
 
-            scripts/waive_attestation.sh \\
-              --trail "${KOSLI_TRAIL}" \\
-              --fingerprint "${{ needs.backend.outputs.orders-api-fingerprint }}" \\
-              --reason "why this is acceptable, and what happens next"
+            trail:               ${KOSLI_TRAIL}
+            fingerprint:         ${{ needs.backend.outputs.orders-api-fingerprint }}
+            mutation_threshold:  a value the current score clears
 
           ...then re-run this job. The Sonar attestation arrives by webhook, so it can also
           simply not have landed yet.
