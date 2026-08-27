@@ -44,8 +44,8 @@ Full design rationale, setup steps and gotchas: [CLAUDE.md](CLAUDE.md).
 
 - Sonar: https://sonarcloud.io/project/overview?id=kosli-dev_azure-java-appservice-demo
 - Azure Portal: https://portal.azure.com/#@/resource/subscriptions/96cdee58-1fa8-419d-a65a-7233b3465632/resourceGroups/rg-kosli-orders-api-demo/overview
-- API URL staging: https://kosli-orders-api-demo-staging.azurewebsites.net
-- API URL prod: https://kosli-orders-api-demo.azurewebsites.net
+- API URL staging: https://kosli-orders-api-demo-staging.azurewebsites.net/api/health
+- API URL prod: https://kosli-orders-api-demo.azurewebsites.net/api/health
 
 ## Demo scenarios
 
