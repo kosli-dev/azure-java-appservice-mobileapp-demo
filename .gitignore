@@ -17,5 +17,6 @@ mutation-testing.json
 __pycache__/
 *.pyc
 
+
 # Mobile scan results and packaged app artifacts
 build/
