@@ -13,11 +13,13 @@ attesting to one Kosli flow, `order-system-ci`, whose trail is the commit SHA:
 
 ```mermaid
 flowchart LR
-    trail["trail: begin + attest PR"] --> backend["backend<br/>build, unit tests,<br/>mutation tests, sonar"]
+    trail["trail: begin + attest PR"] --> peer["peer review<br/>evaluate PR facts"]
+    trail --> backend["backend<br/>build, unit tests,<br/>mutation tests, sonar"]
     trail --> android["mobile: android<br/>package + Oversecured"]
     trail --> ios["mobile: ios<br/>package + Oversecured"]
 
-    backend --> publish{{"Publish gate"}}
+    peer --> publish{{"Publish gate"}}
+    backend --> publish
     android --> publish
     ios --> publish
 
@@ -28,7 +30,7 @@ flowchart LR
     release -->|compliant| prod["Deploy to production"]
 ```
 
-- **Publish gate** — `kosli assert artifact` against the flow template: did the build produce
+- **Publish gate** — `kosli assert artifact --environment azure-appservice-staging` against the staging environment policy: did the build produce
   everything it owed (peer review, unit tests, Sonar quality gate, mutation score, both mobile
   scans)? Passing deploys to **staging**, not production.
 - **Release gate** — after a human approves the protected `production-release` environment,
