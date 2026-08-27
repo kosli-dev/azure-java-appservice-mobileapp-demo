@@ -16,7 +16,7 @@ public final class OrderPricer {
     static final BigDecimal UNIT_PRICE = new BigDecimal("10.00");
     static final BigDecimal EXPEDITED_FEE = new BigDecimal("7.65");
     static final int BULK_THRESHOLD = 10; 
-    static final BigDecimal BULK_DISCOUNT = new BigDecimal("0.05");
+    static final BigDecimal BULK_DISCOUNT = new BigDecimal("0.06");
 
     private OrderPricer() {
     }
