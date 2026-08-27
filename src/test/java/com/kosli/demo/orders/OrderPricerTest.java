@@ -37,12 +37,12 @@ class OrderPricerTest {
     }
 
     @Test
-    @DisplayName("bulk orders stack an extra 5% on top of the tier discount")
+    @DisplayName("bulk orders stack an extra 6% on top of the tier discount")
     void bulkDiscountStacks() {
         OrderPricer.Quote quote = OrderPricer.quote(12, "GOLD", false);
 
         assertThat(quote.subtotal()).isEqualByComparingTo("120.00");
-        assertThat(quote.total()).isEqualByComparingTo("96.00");
+        assertThat(quote.total()).isEqualByComparingTo("94.80");
     }
 
     @Test
